@@ -1,0 +1,249 @@
+---
+title: 'Stripe Integration'
+description: 'Automatically create and manage Cryptlex licenses based on Stripe payments and subscriptions'
+---
+
+## Overview
+
+The Stripe integration is a lightweight webhook server that automatically creates and renews Cryptlex licenses when Stripe payments are processed. It handles invoice payments, checkout sessions, and customer creation events to ensure seamless license management.
+
+**Key capabilities:**
+- Create licenses when subscriptions start or one-time purchases complete
+- Automatically renew licenses on recurring subscription payments
+- Sync customer data between Stripe and Cryptlex
+- Verify webhook authenticity using Stripe webhook signatures
+
+## Supported Webhook Events
+
+The integration handles three Stripe webhook event types:
+
+<AccordionGroup>
+  <Accordion title="invoice.paid">
+    Triggered when a Stripe invoice is successfully paid.
+    
+    **Actions:**
+    - **New subscription** (`billing_reason: subscription_create`): Creates a new user and license in Cryptlex
+    - **Recurring payment** (`billing_reason: subscription_cycle`): Renews the existing license and extends expiry date
+    
+    The handler extracts the subscription ID and stores it in license metadata with key `subscription_id` to link future renewals.
+  </Accordion>
+  
+  <Accordion title="checkout.session.completed">
+    Triggered when a Stripe Checkout session is successfully completed.
+    
+    **Actions:**
+    - Creates a new user (or finds existing) based on customer email
+    - Creates a new license linked to the Stripe subscription
+    - Stores subscription ID in license metadata for future renewals
+  </Accordion>
+  
+  <Accordion title="customer.created">
+    Triggered when a new customer is created in Stripe.
+    
+    **Actions:**
+    - Creates or updates a user in Cryptlex with the customer's email and name
+    - Returns the Cryptlex user ID
+  </Accordion>
+</AccordionGroup>
+
+## Environment Variables
+
+Set these environment variables in your hosting environment:
+
+| Variable | Required | Description |
+|----------|----------|-------------|
+| `STRIPE_WEBHOOK_SECRET` | Yes | Your Stripe webhook signing secret, used to verify webhook authenticity |
+| `CRYPTLEX_PRODUCT_ID` | Yes | The Cryptlex Product ID for licenses to create or renew |
+| `CRYPTLEX_ACCESS_TOKEN` | Yes | Cryptlex API access token with `license:read`, `license:write`, `user:read`, `user:write` permissions |
+| `CRYPTLEX_WEB_API_BASE_URL` | Yes | Base URL of the Cryptlex Web API |
+
+<Note>
+You can find your Stripe webhook secret in the Stripe Dashboard under **Developers > Webhooks**. Each webhook endpoint has its own signing secret.
+</Note>
+
+## Setup Instructions
+
+### 1. Deploy the Integration
+
+Choose your deployment method:
+
+**AWS Lambda:**
+Review the provided `aws.yml` GitHub Actions workflow for automated deployments.
+
+**Node.js / Docker:**
+Use the provided Dockerfile to run in any containerized environment.
+
+### 2. Configure Stripe Webhook
+
+1. In your Stripe Dashboard, go to **Developers > Webhooks**
+2. Click **Add endpoint**
+3. Set the endpoint URL to your deployed server: `https://your-domain.com/v1`
+4. Select the following events to listen to:
+   - `invoice.paid`
+   - `checkout.session.completed`
+   - `customer.created`
+5. Click **Add endpoint**
+6. Copy the **Signing secret** and set it as `STRIPE_WEBHOOK_SECRET` in your environment
+
+<Warning>
+Never commit your `STRIPE_WEBHOOK_SECRET` to version control. Always use environment variables or secrets management.
+</Warning>
+
+### 3. Set Environment Variables
+
+Configure all required environment variables in your hosting platform:
+
+```bash
+STRIPE_WEBHOOK_SECRET=whsec_...
+CRYPTLEX_PRODUCT_ID=your-product-id
+CRYPTLEX_ACCESS_TOKEN=your-access-token
+CRYPTLEX_WEB_API_BASE_URL=https://api.cryptlex.com
+```
+
+## Webhook Signature Verification
+
+The integration uses Stripe's official webhook verification to ensure requests are authentic:
+
+```typescript
+const signature = context.req.header('stripe-signature');
+if (!signature) {
+    throw new Error('No stripe-signature header was found.');
+}
+const body = await context.req.text();
+
+// Verify event sent by Stripe
+const event = await Stripe.webhooks.constructEventAsync(
+    body,
+    signature,
+    STRIPE_WEBHOOK_SECRET
+);
+```
+
+**How it works:**
+1. Stripe signs each webhook with your endpoint's secret
+2. The signature is sent in the `stripe-signature` header
+3. The integration verifies the signature matches the raw request body
+4. Only verified events are processed
+
+<Note>
+Stripe's `constructEventAsync` will throw an error if signature verification fails, automatically rejecting tampered requests.
+</Note>
+
+## Example Workflows
+
+### New Subscription
+
+When a customer subscribes via Stripe:
+
+1. **Event:** `invoice.paid` with `billing_reason: subscription_create`
+2. **Handler:** `handleInvoicePaid`
+3. **Actions:**
+   - Extract customer email from invoice
+   - Create or find user in Cryptlex
+   - Create new license with subscription ID in metadata
+4. **Result:** Customer receives license key
+
+```typescript
+const license = await client.POST('/v3/licenses', {
+    body: {
+        productId: productId,
+        userId: userId,
+        metadata: [
+            { key: 'subscription_id', value: subscriptionId, viewPermissions: [] }
+        ]
+    }
+});
+```
+
+### Recurring Payment
+
+When a subscription renews:
+
+1. **Event:** `invoice.paid` with `billing_reason: subscription_cycle`
+2. **Handler:** `handleInvoicePaid`
+3. **Actions:**
+   - Find license by subscription ID metadata
+   - Renew license to extend expiry date
+4. **Result:** License remains valid for another billing period
+
+```typescript
+const licenses = await client.GET('/v3/licenses', {
+    params: {
+        query: {
+            "productId": { eq: productId },
+            "metadata.key": { eq: "subscription_id" },
+            "metadata.value": { eq: subscriptionId }
+        }
+    }
+});
+
+const license = await client.POST('/v3/licenses/{id}/renew', {
+    params: { path: { id: licenseId } }
+});
+```
+
+### Checkout Session
+
+When a customer completes checkout:
+
+1. **Event:** `checkout.session.completed`
+2. **Handler:** `handleCheckoutSessionFlow`
+3. **Actions:**
+   - Extract customer email and name from session
+   - Create user and license
+   - Store subscription ID for future renewals
+4. **Result:** New license created and ready to use
+
+## FAQ
+
+<AccordionGroup>
+  <Accordion title="What happens if a webhook fails?">
+    Stripe automatically retries failed webhooks for up to 3 days. Check your webhook logs in the Stripe Dashboard to see delivery attempts and errors.
+  </Accordion>
+  
+  <Accordion title="Can I use this for one-time purchases?">
+    Yes! The `checkout.session.completed` event handles both subscription and one-time purchases. For one-time purchases without subscriptions, the subscription ID will be the session ID.
+  </Accordion>
+  
+  <Accordion title="How do I test webhooks locally?">
+    Use the Stripe CLI to forward webhooks to localhost:
+    ```bash
+    stripe listen --forward-to localhost:3000/v1
+    stripe trigger invoice.paid
+    ```
+  </Accordion>
+  
+  <Accordion title="What if a customer email already exists?">
+    The integration uses `insertUser` which handles duplicates gracefully. If a user with the same email exists, it returns the existing user ID instead of creating a duplicate.
+  </Accordion>
+  
+  <Accordion title="Can I customize which Product ID is used?">
+    Currently, the integration uses a single `CRYPTLEX_PRODUCT_ID` for all licenses. For multiple products, you can modify the handlers to extract product ID from Stripe metadata.
+  </Accordion>
+</AccordionGroup>
+
+## Error Handling
+
+The integration validates all required data and throws descriptive errors:
+
+```typescript
+if (!invoice.customer_email) {
+    throw new Error(`Customer email not found in invoice with ID: ${invoice.id}`);
+}
+```
+
+All errors are logged and returned with HTTP 400 status:
+
+```json
+{
+  "message": "Customer email not found in invoice with ID: in_123..."
+}
+```
+
+<Warning>
+Monitor your webhook endpoint logs regularly to catch and fix any processing errors.
+</Warning>
+
+## Support
+
+If you have questions or experience issues, contact Cryptlex support at [support@cryptlex.com](mailto:support@cryptlex.com).

@@ -1,0 +1,155 @@
+---
+title: Webhook Events Reference
+description: Complete reference of webhook events supported by the Cryptlex Payment Platform Integrations
+---
+
+This page provides a comprehensive reference of all webhook events handled by the integration, organized by payment platform.
+
+## Event Overview
+
+The webhook server processes events from three payment platforms: Stripe, FastSpring, and Paddle. Each event triggers specific actions in the Cryptlex license management system.
+
+### Stripe Events
+
+<ParamField path="invoice.paid" type="event">
+  Triggered when a Stripe invoice payment succeeds.
+  
+  **Actions:**
+  - **New subscription** (`billing_reason: subscription_create`): Creates a new user and license
+  - **Renewal** (`billing_reason: subscription_cycle`): Renews existing license by extending expiry date
+  
+  **Implementation:** [handleInvoicePaid](file:///home/daytona/workspace/source/stripe/lib/handlers/handleInvoicePaid.ts:8)
+</ParamField>
+
+<ParamField path="checkout.session.completed" type="event">
+  Triggered when a customer completes a Stripe Checkout session.
+  
+  **Actions:**
+  - Creates a new user (if doesn't exist)
+  - Creates a new license with subscription ID stored in metadata
+  
+  **Implementation:** [handleCheckoutSessionFlow](file:///home/daytona/workspace/source/stripe/lib/handlers/handleCheckoutSession.ts:9)
+</ParamField>
+
+<ParamField path="customer.created" type="event">
+  Triggered when a new customer is created in Stripe.
+  
+  **Actions:**
+  - Upserts user in Cryptlex (creates new or updates existing)
+  
+  **Implementation:** [handleCustomerCreated](file:///home/daytona/workspace/source/stripe/lib/handlers/handleCustomerCreated.ts:6)
+</ParamField>
+
+### FastSpring Events
+
+<ParamField path="order.completed" type="event">
+  Triggered when a FastSpring order is completed.
+  
+  **Actions:**
+  - Creates a new user with customer details (first name, last name, company)
+  - Creates licenses for all items in the order
+  - Supports bundle products, add-ons, subscription-based, and one-time licenses
+  - Handles quantity mapping (license count or allowed activations)
+  
+  **Implementation:** [handleOrderCreated](file:///home/daytona/workspace/source/fastspring/lib/eventHandlers/handleOrderCreated.ts:25)
+</ParamField>
+
+<ParamField path="subscription.charge.completed" type="event">
+  Triggered when a subscription payment succeeds.
+  
+  **Actions:**
+  - Renews all licenses associated with the subscription
+  - Unsuspends licenses if they were previously suspended
+  
+  **Implementation:** [handleSubscriptionChargeCompleted](file:///home/daytona/workspace/source/fastspring/lib/eventHandlers/handleSubscriptionChargeCompleted.ts:6)
+</ParamField>
+
+<ParamField path="subscription.payment.overdue" type="event">
+  Triggered when a subscription payment is overdue.
+  
+  **Actions:**
+  - Suspends all licenses associated with the subscription
+  
+  **Implementation:** [handleSubscriptionPaymentOverdue](file:///home/daytona/workspace/source/fastspring/lib/eventHandlers/handleSubscriptionPaymentOverdue.ts:6)
+</ParamField>
+
+<ParamField path="subscription.deactivated" type="event">
+  Triggered when a subscription is deactivated (cancelled).
+  
+  **Actions:**
+  - Deletes all licenses associated with the subscription
+  
+  **Implementation:** [handleSubscriptionDeactivated](file:///home/daytona/workspace/source/fastspring/lib/eventHandlers/handleSubscriptionDeactivated.ts:6)
+</ParamField>
+
+### Paddle Events
+
+<ParamField path="transaction.completed" type="event">
+  Triggered when a Paddle transaction completes. Handles multiple scenarios based on transaction origin.
+  
+  **Actions by Origin:**
+  
+  - **`web` or `api`**: Creates new user and licenses for initial purchase
+  - **`subscription-recurring`**: Renews licenses and unsuspends if needed
+  - **`subscription-update`**: Resumes suspended licenses and updates expiry dates
+  
+  **Implementation:** [handleTransactionCompleted](file:///home/daytona/workspace/source/paddle/lib/handlers/handleTransactionCompleted.ts:266)
+</ParamField>
+
+<ParamField path="subscription.paused" type="event">
+  Triggered when a Paddle subscription is paused.
+  
+  **Actions:**
+  - Suspends all licenses associated with the subscription
+  
+  **Implementation:** [handleSubscriptionPaused](file:///home/daytona/workspace/source/paddle/lib/handlers/handleSubscriptionPaused.ts:7)
+</ParamField>
+
+<ParamField path="customer.created" type="event">
+  Triggered when a new customer is created in Paddle.
+  
+  **Actions:**
+  - Upserts user in Cryptlex with Paddle customer ID stored in metadata
+  
+  **Implementation:** [handleCustomerCreated](file:///home/daytona/workspace/source/paddle/lib/handlers/handleCustomerCreated.ts:12)
+</ParamField>
+
+## Event Processing Flow
+
+All webhook events follow this general flow:
+
+1. **Signature Verification**: Event payload is verified using platform-specific secrets
+   - Stripe: `stripe-signature` header with `STRIPE_WEBHOOK_SECRET`
+   - FastSpring: `x-fs-signature` header with `FASTSPRING_WEBHOOK_SECRET` (HMAC SHA256)
+   - Paddle: `Paddle-Signature` header with `PADDLE_WEBHOOK_SECRET`
+
+2. **Event Routing**: Event type is extracted and routed to appropriate handler
+
+3. **Handler Execution**: Platform-specific handler processes the event
+
+4. **Cryptlex API Interaction**: Handler calls Cryptlex API to create/update users and licenses
+
+5. **Response**: Returns JSON response with status code and message
+
+## Event Registration
+
+Events are registered in the main application files:
+
+- **Stripe**: [stripe/lib/app.ts](file:///home/daytona/workspace/source/stripe/lib/app.ts:57-69)
+- **FastSpring**: [fastspring/lib/app.ts](file:///home/daytona/workspace/source/fastspring/lib/app.ts:62-74)
+- **Paddle**: [paddle/lib/app.ts](file:///home/daytona/workspace/source/paddle/lib/app.ts:54-66)
+
+## Error Handling
+
+All unsupported event types return a 400 error:
+
+```typescript
+default:
+  throw new Error(`Webhook with event type ${event.type} is not supported.`);
+```
+
+Event handlers throw descriptive errors that include:
+- Event ID
+- User ID (if created)
+- License IDs (if created/modified)
+- Specific failure reason

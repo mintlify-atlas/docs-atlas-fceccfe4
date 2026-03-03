@@ -1,0 +1,343 @@
+---
+title: 'Docker & Node.js Deployment'
+description: 'Deploy the webhook server using Docker containers or standalone Node.js'
+---
+
+## Overview
+
+The webhook server can be deployed as a containerized application using Docker, or run directly with Node.js. This deployment method is ideal for self-hosted environments, Kubernetes clusters, or cloud platforms that support container deployments.
+
+## Docker Deployment
+
+### Building the Docker Image
+
+The provided Dockerfile uses a multi-stage build to create an optimized production image:
+
+<CodeGroup>
+```bash Stripe
+docker build \
+  --build-arg PAYMENT_PLATFORM=stripe \
+  -t cryptlex-stripe-webhook:latest \
+  .
+```
+
+```bash FastSpring
+docker build \
+  --build-arg PAYMENT_PLATFORM=fastspring \
+  -t cryptlex-fastspring-webhook:latest \
+  .
+```
+
+```bash Paddle
+docker build \
+  --build-arg PAYMENT_PLATFORM=paddle \
+  -t cryptlex-paddle-webhook:latest \
+  .
+```
+</CodeGroup>
+
+The build process:
+1. Uses Node.js 22 Alpine as the base image
+2. Installs dependencies and builds the platform-specific bundle
+3. Creates a minimal runtime image with only production dependencies
+4. Runs as a non-root user (`hono:nodejs`) for security
+
+### Running the Container
+
+Run the container with the required environment variables:
+
+<CodeGroup>
+```bash Stripe
+docker run -d \
+  --name cryptlex-stripe-webhook \
+  -p 9890:9890 \
+  -e STRIPE_WEBHOOK_SECRET="whsec_..." \
+  -e CRYPTLEX_PRODUCT_ID="your-product-id" \
+  -e CRYPTLEX_ACCESS_TOKEN="your-access-token" \
+  -e CRYPTLEX_WEB_API_BASE_URL="https://api.cryptlex.com/v3" \
+  cryptlex-stripe-webhook:latest
+```
+
+```bash FastSpring
+docker run -d \
+  --name cryptlex-fastspring-webhook \
+  -p 9890:9890 \
+  -e FASTSPRING_WEBHOOK_SECRET="your-webhook-secret" \
+  -e CRYPTLEX_WEB_API_BASE_URL="https://api.cryptlex.com/v3" \
+  -e CRYPTLEX_ACCESS_TOKEN="your-access-token" \
+  cryptlex-fastspring-webhook:latest
+```
+
+```bash Paddle
+docker run -d \
+  --name cryptlex-paddle-webhook \
+  -p 9890:9890 \
+  -e PADDLE_WEBHOOK_SECRET="your-webhook-secret" \
+  -e CRYPTLEX_WEB_API_BASE_URL="https://api.cryptlex.com/v3" \
+  -e CRYPTLEX_ACCESS_TOKEN="your-access-token" \
+  cryptlex-paddle-webhook:latest
+```
+</CodeGroup>
+
+<Info>
+  The server listens on port **9890** by default. Map this to your desired host port using the `-p` flag.
+</Info>
+
+### Using Environment Files
+
+For easier management, store environment variables in a file:
+
+```bash .env.stripe
+STRIPE_WEBHOOK_SECRET=whsec_...
+CRYPTLEX_PRODUCT_ID=your-product-id
+CRYPTLEX_ACCESS_TOKEN=your-access-token
+CRYPTLEX_WEB_API_BASE_URL=https://api.cryptlex.com/v3
+```
+
+Run with the env file:
+
+```bash
+docker run -d \
+  --name cryptlex-stripe-webhook \
+  -p 9890:9890 \
+  --env-file .env.stripe \
+  cryptlex-stripe-webhook:latest
+```
+
+<Warning>
+  Never commit `.env` files containing secrets to version control. Add them to `.gitignore`.
+</Warning>
+
+## Standalone Node.js Deployment
+
+You can run the webhook server directly with Node.js without Docker:
+
+### Build Process
+
+<CodeGroup>
+```bash Stripe
+npm ci
+npm run build:stripe:node
+```
+
+```bash FastSpring
+npm ci
+npm run build:fastspring:node
+```
+
+```bash Paddle
+npm ci
+npm run build:paddle:node
+```
+</CodeGroup>
+
+### Running the Server
+
+Set environment variables and start the server:
+
+```bash
+export STRIPE_WEBHOOK_SECRET="whsec_..."
+export CRYPTLEX_PRODUCT_ID="your-product-id"
+export CRYPTLEX_ACCESS_TOKEN="your-access-token"
+export CRYPTLEX_WEB_API_BASE_URL="https://api.cryptlex.com/v3"
+
+node dist/index.node.js
+```
+
+The server will start on port 9890.
+
+## Health Checks
+
+### Docker Health Check
+
+Add a health check to your Docker run command:
+
+```bash
+docker run -d \
+  --name cryptlex-webhook \
+  -p 9890:9890 \
+  --env-file .env \
+  --health-cmd="wget --no-verbose --tries=1 --spider http://localhost:9890/ || exit 1" \
+  --health-interval=30s \
+  --health-timeout=5s \
+  --health-retries=3 \
+  cryptlex-webhook:latest
+```
+
+Or add to your `docker-compose.yml`:
+
+```yaml docker-compose.yml
+version: '3.8'
+services:
+  webhook:
+    build:
+      context: .
+      args:
+        PAYMENT_PLATFORM: stripe
+    ports:
+      - "9890:9890"
+    env_file:
+      - .env.stripe
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:9890/"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    restart: unless-stopped
+```
+
+## Production Considerations
+
+### Reverse Proxy Setup
+
+In production, run the webhook server behind a reverse proxy like Nginx:
+
+```nginx nginx.conf
+server {
+    listen 443 ssl http2;
+    server_name webhook.yourdomain.com;
+
+    ssl_certificate /path/to/cert.pem;
+    ssl_certificate_key /path/to/key.pem;
+
+    location / {
+        proxy_pass http://localhost:9890;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+}
+```
+
+### Container Orchestration
+
+For Kubernetes deployments:
+
+```yaml deployment.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: cryptlex-webhook
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: cryptlex-webhook
+  template:
+    metadata:
+      labels:
+        app: cryptlex-webhook
+    spec:
+      containers:
+      - name: webhook
+        image: cryptlex-webhook:latest
+        ports:
+        - containerPort: 9890
+        env:
+        - name: STRIPE_WEBHOOK_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: webhook-secrets
+              key: stripe-webhook-secret
+        - name: CRYPTLEX_ACCESS_TOKEN
+          valueFrom:
+            secretKeyRef:
+              name: webhook-secrets
+              key: cryptlex-access-token
+        - name: CRYPTLEX_PRODUCT_ID
+          value: "your-product-id"
+        - name: CRYPTLEX_WEB_API_BASE_URL
+          value: "https://api.cryptlex.com/v3"
+        livenessProbe:
+          httpGet:
+            path: /
+            port: 9890
+          initialDelaySeconds: 10
+          periodSeconds: 30
+        resources:
+          requests:
+            memory: "128Mi"
+            cpu: "100m"
+          limits:
+            memory: "256Mi"
+            cpu: "200m"
+```
+
+### Logging
+
+The application logs to stdout/stderr. Configure log aggregation:
+
+**Docker logging driver**:
+```bash
+docker run -d \
+  --log-driver=json-file \
+  --log-opt max-size=10m \
+  --log-opt max-file=3 \
+  cryptlex-webhook:latest
+```
+
+**View logs**:
+```bash
+docker logs -f cryptlex-webhook
+```
+
+## Port Configuration
+
+The server is configured to listen on port **9890** as defined in the Dockerfile:
+
+```dockerfile
+EXPOSE 9890
+```
+
+To use a different port, you can:
+
+1. **Map to a different host port** (recommended):
+   ```bash
+   docker run -p 8080:9890 ...
+   ```
+
+2. **Modify the Dockerfile** and rebuild:
+   ```dockerfile
+   EXPOSE 8080
+   ```
+
+## Troubleshooting
+
+### Container Won't Start
+
+```bash
+# Check container logs
+docker logs cryptlex-webhook
+
+# Inspect container configuration
+docker inspect cryptlex-webhook
+```
+
+### Environment Variables Not Set
+
+Verify environment variables inside the container:
+
+```bash
+docker exec cryptlex-webhook env | grep CRYPTLEX
+```
+
+### Permission Denied Errors
+
+The container runs as user `hono` (UID 1001). Ensure mounted volumes have appropriate permissions:
+
+```bash
+chown -R 1001:1001 /path/to/mounted/volume
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Environment Variables" icon="gear" href="/deployment/environment-variables">
+    Complete reference for all environment variables
+  </Card>
+  <Card title="AWS Lambda" icon="aws" href="/deployment/aws-lambda">
+    Alternative serverless deployment option
+  </Card>
+</CardGroup>

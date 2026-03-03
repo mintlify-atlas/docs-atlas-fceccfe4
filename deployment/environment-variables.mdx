@@ -1,0 +1,314 @@
+---
+title: 'Environment Variables'
+description: 'Complete reference for all environment variables across Stripe, FastSpring, and Paddle integrations'
+---
+
+## Overview
+
+Each payment platform integration requires specific environment variables to authenticate with both the payment provider and the Cryptlex API. This page provides a comprehensive reference for all supported environment variables.
+
+<Warning>
+  **Security Best Practice**: Never hardcode credentials in your source code. Always use environment variables or secrets management systems. Never commit `.env` files to version control.
+</Warning>
+
+## Stripe Integration
+
+Required environment variables for the Stripe webhook integration:
+
+<ParamField path="STRIPE_WEBHOOK_SECRET" type="string" required>
+  Your Stripe webhook signing secret, used to verify the authenticity of incoming webhook events.
+  
+  **Where to find it**: 
+  1. Go to the [Stripe Dashboard](https://dashboard.stripe.com/webhooks)
+  2. Select your webhook endpoint
+  3. Click "Reveal" in the "Signing secret" section
+  
+  **Format**: Starts with `whsec_`
+  
+  **Example**: `whsec_1234567890abcdefghijklmnopqrstuvwxyz`
+</ParamField>
+
+<ParamField path="CRYPTLEX_PRODUCT_ID" type="string" required>
+  The Cryptlex Product ID corresponding to the license you want to create or renew.
+  
+  **Where to find it**:
+  1. Log in to your [Cryptlex Dashboard](https://app.cryptlex.com)
+  2. Navigate to **Products**
+  3. Copy the Product ID from your product details
+  
+  **Example**: `abc12345-6789-0def-ghij-klmnopqrstuv`
+</ParamField>
+
+<ParamField path="CRYPTLEX_ACCESS_TOKEN" type="string" required>
+  A valid Cryptlex API access token for authenticating requests to the Cryptlex API.
+  
+  **Required permissions**:
+  - `license:read`
+  - `license:write`
+  - `user:read`
+  - `user:write`
+  
+  **Where to find it**:
+  1. Log in to your [Cryptlex Dashboard](https://app.cryptlex.com)
+  2. Navigate to **Settings** > **Access Tokens**
+  3. Create a new token with the required permissions
+  
+  <Warning>
+    Treat access tokens like passwords. Never expose them in client-side code or public repositories.
+  </Warning>
+</ParamField>
+
+<ParamField path="CRYPTLEX_WEB_API_BASE_URL" type="string" required>
+  The base URL of the Cryptlex Web API.
+  
+  **Default value**: `https://api.cryptlex.com/v3`
+  
+  **When to change**: Only modify this if you're using a dedicated Cryptlex instance or testing environment.
+</ParamField>
+
+## FastSpring Integration
+
+Required environment variables for the FastSpring webhook integration:
+
+<ParamField path="FASTSPRING_WEBHOOK_SECRET" type="string" required>
+  Your FastSpring webhook secret, used to verify the authenticity of incoming webhook events using HMAC-SHA256 signature validation.
+  
+  **Where to find it**:
+  1. Log in to your [FastSpring Dashboard](https://dashboard.fastspring.com)
+  2. Navigate to **Integrations** > **Webhooks**
+  3. Create or view your webhook configuration
+  4. Copy the HMAC SHA256 Secret
+  
+  **Security**: FastSpring uses HMAC-SHA256 to sign webhook payloads. The server validates the `X-FS-Signature` header against this secret.
+</ParamField>
+
+<ParamField path="CRYPTLEX_WEB_API_BASE_URL" type="string" required>
+  The base URL of the Cryptlex Web API.
+  
+  **Default value**: `https://api.cryptlex.com/v3`
+</ParamField>
+
+<ParamField path="CRYPTLEX_ACCESS_TOKEN" type="string" required>
+  A valid Cryptlex API access token for authenticating requests.
+  
+  **Required permissions**:
+  - `license:read`
+  - `license:write`
+  - `user:read`
+  - `user:write`
+  - `licenseTemplate:read` (required only if subscription add-ons are supported)
+  
+  <Info>
+    FastSpring integration requires `licenseTemplate:read` permission if you plan to support subscription add-ons that map to different license templates.
+  </Info>
+</ParamField>
+
+## Paddle Integration
+
+Required environment variables for the Paddle webhook integration:
+
+<ParamField path="PADDLE_WEBHOOK_SECRET" type="string" required>
+  Your Paddle webhook secret, used to verify webhook signatures using the Paddle SDK.
+  
+  **Where to find it**:
+  1. Log in to your [Paddle Dashboard](https://vendors.paddle.com/)
+  2. Navigate to **Developer Tools** > **Notifications**
+  3. Create or view your notification settings
+  4. Copy the webhook secret key
+  
+  **Verification method**: The server uses the Paddle SDK's `paddle.webhooks.unmarshal()` method to verify the `Paddle-Signature` header.
+  
+  <Info>
+    No Paddle API key is required for webhook verification. The SDK validates signatures using only the webhook secret.
+  </Info>
+</ParamField>
+
+<ParamField path="CRYPTLEX_WEB_API_BASE_URL" type="string" required>
+  The base URL of the Cryptlex Web API.
+  
+  **Default value**: `https://api.cryptlex.com/v3`
+</ParamField>
+
+<ParamField path="CRYPTLEX_ACCESS_TOKEN" type="string" required>
+  A valid Cryptlex API access token for authenticating requests.
+  
+  **Required permissions**:
+  - `license:read`
+  - `license:write`
+  - `user:read`
+  - `user:write`
+</ParamField>
+
+## Environment Variables Comparison
+
+Quick reference table showing which variables are required for each platform:
+
+| Variable | Stripe | FastSpring | Paddle |
+|----------|---------|------------|--------|
+| `STRIPE_WEBHOOK_SECRET` | Required | - | - |
+| `FASTSPRING_WEBHOOK_SECRET` | - | Required | - |
+| `PADDLE_WEBHOOK_SECRET` | - | - | Required |
+| `CRYPTLEX_PRODUCT_ID` | Required | - | - |
+| `CRYPTLEX_ACCESS_TOKEN` | Required | Required | Required |
+| `CRYPTLEX_WEB_API_BASE_URL` | Required | Required | Required |
+
+<Info>
+  **Note**: Stripe is the only integration that requires `CRYPTLEX_PRODUCT_ID` as an environment variable. FastSpring and Paddle extract product information from the webhook payload.
+</Info>
+
+## Setting Environment Variables
+
+### AWS Lambda
+
+In the AWS Lambda console:
+
+1. Navigate to your function
+2. Go to **Configuration** > **Environment variables**
+3. Click **Edit**
+4. Add each required variable with its value
+5. Click **Save**
+
+### Docker
+
+**Using command-line flags**:
+```bash
+docker run -e STRIPE_WEBHOOK_SECRET="whsec_..." \
+  -e CRYPTLEX_ACCESS_TOKEN="your-token" \
+  ...
+```
+
+**Using an environment file**:
+```bash .env
+STRIPE_WEBHOOK_SECRET=whsec_...
+CRYPTLEX_PRODUCT_ID=abc12345-6789-0def-ghij-klmnopqrstuv
+CRYPTLEX_ACCESS_TOKEN=your-access-token
+CRYPTLEX_WEB_API_BASE_URL=https://api.cryptlex.com/v3
+```
+
+```bash
+docker run --env-file .env cryptlex-webhook:latest
+```
+
+### Node.js
+
+**Export in shell**:
+```bash
+export STRIPE_WEBHOOK_SECRET="whsec_..."
+export CRYPTLEX_ACCESS_TOKEN="your-token"
+node dist/index.node.js
+```
+
+**Using a .env file** (with dotenv package):
+```bash .env
+STRIPE_WEBHOOK_SECRET=whsec_...
+CRYPTLEX_ACCESS_TOKEN=your-token
+```
+
+## Security Best Practices
+
+<AccordionGroup>
+  <Accordion title="Use Secrets Management">
+    For production deployments, use dedicated secrets management:
+    
+    - **AWS**: AWS Secrets Manager or Parameter Store
+    - **Kubernetes**: Kubernetes Secrets
+    - **Docker Swarm**: Docker Secrets
+    - **Azure**: Azure Key Vault
+    - **GCP**: Google Secret Manager
+  </Accordion>
+  
+  <Accordion title="Rotate Credentials Regularly">
+    Implement a rotation policy for:
+    
+    - Webhook secrets (every 90 days)
+    - Cryptlex access tokens (every 6-12 months)
+    - AWS credentials (every 90 days)
+    
+    Update your deployment immediately after rotation.
+  </Accordion>
+  
+  <Accordion title="Limit Token Permissions">
+    Create Cryptlex access tokens with only the minimum required permissions:
+    
+    - Never use admin tokens for webhook integrations
+    - Create dedicated tokens per integration
+    - Document which token is used where
+  </Accordion>
+  
+  <Accordion title="Never Commit Secrets">
+    Protect your secrets from accidental exposure:
+    
+    - Add `.env` files to `.gitignore`
+    - Use git-secrets or similar tools to scan commits
+    - Enable secret scanning in GitHub repository settings
+    - Review all code before pushing to public repositories
+  </Accordion>
+  
+  <Accordion title="Monitor Access Logs">
+    Regularly review access patterns:
+    
+    - Check Cryptlex API usage logs
+    - Monitor webhook delivery success rates
+    - Set up alerts for authentication failures
+    - Review CloudWatch or application logs for anomalies
+  </Accordion>
+</AccordionGroup>
+
+## Validation
+
+The webhook server validates all required environment variables at startup. If any required variable is missing, the server will:
+
+1. Log an error message indicating which variable is missing
+2. Return a 400 error response for webhook requests
+3. Reject the webhook with message: `<VARIABLE_NAME> was not found in environment variables.`
+
+Example error from stripe/lib/app.ts:20:
+```javascript
+if (typeof (STRIPE_WEBHOOK_SECRET) !== 'string') {
+    throw new Error('STRIPE_WEBHOOK_SECRET was not found in environment variables.');
+}
+```
+
+<Tip>
+  Test your environment variable configuration by sending a test webhook from your payment platform. Check the logs to ensure all variables are correctly loaded.
+</Tip>
+
+## Troubleshooting
+
+### Variable Not Found Error
+
+**Symptom**: Error message `<VARIABLE_NAME> was not found in environment variables`
+
+**Solution**:
+- Verify the variable is set in your deployment environment
+- Check for typos in variable names (they are case-sensitive)
+- Ensure variables are available to the process (not just in your shell)
+
+### Webhook Signature Verification Failed
+
+**Symptom**: Webhook requests are rejected with signature verification errors
+
+**Solution**:
+- Verify the webhook secret matches your payment platform configuration
+- Check for extra whitespace in the secret value
+- Ensure you're using the correct secret for the environment (test vs. live)
+
+### Cryptlex API Authentication Failed
+
+**Symptom**: Errors creating users or licenses
+
+**Solution**:
+- Verify the access token has the required permissions
+- Check that the token hasn't expired
+- Ensure `CRYPTLEX_WEB_API_BASE_URL` points to the correct environment
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="AWS Lambda Deployment" icon="aws" href="/deployment/aws-lambda">
+    Deploy using GitHub Actions to AWS Lambda
+  </Card>
+  <Card title="Docker Deployment" icon="docker" href="/deployment/docker-nodejs">
+    Deploy using Docker containers
+  </Card>
+</CardGroup>

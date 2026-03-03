@@ -1,0 +1,275 @@
+---
+title: License Management Functions
+description: Utility functions for creating and managing Cryptlex licenses from payment platform webhooks
+---
+
+The `licenseActions.ts` module provides utility functions for managing Cryptlex licenses from payment platform webhook events.
+
+## Functions
+
+### createLicense
+
+Creates a new license in Cryptlex with the provided configuration.
+
+<ParamField path="client" type="CtlxClientType" required>
+  The Cryptlex API client instance
+</ParamField>
+
+<ParamField path="body" type="object" required>
+  License creation request body containing:
+  
+  - `productId` (string): The Cryptlex product ID
+  - `licenseTemplateId` (string, optional): License template to use
+  - `userId` (string): The user ID to assign the license to
+  - `metadata` (array, optional): Metadata key-value pairs
+  - `subscriptionInterval` (string, optional): Subscription interval (e.g., `"P1M"`, `"P1Y"`, or `""` for perpetual)
+  - `subscriptionStartTrigger` (string, optional): When subscription should start
+  - `allowedActivations` (number, optional): Number of allowed activations
+</ParamField>
+
+<ResponseField name="response" type="HandlerReturn">
+  Returns an object with:
+  - `message`: "License created successfully."
+  - `data`: Object containing the created `license`
+  - `status`: 201
+</ResponseField>
+
+**Usage Example:**
+
+```typescript
+// From Stripe checkout.session.completed
+const body = {
+  productId: productId,
+  userId: userId,
+  metadata: [
+    {
+      key: "subscription_id",
+      value: subscriptionId,
+      viewPermissions: []
+    }
+  ]
+};
+
+return await createLicense(client, body);
+```
+
+**Source:** [licenseActions.ts:5](file:///home/daytona/workspace/source/utils/licenseActions.ts:5)
+
+---
+
+### getLicensesBySubscriptionId
+
+Retrieves all licenses that have a specific subscription ID stored in their metadata.
+
+<ParamField path="client" type="CtlxClientType" required>
+  The Cryptlex API client instance
+</ParamField>
+
+<ParamField path="subscriptionId" type="string" required>
+  The subscription ID to search for
+</ParamField>
+
+<ParamField path="subscriptionIdMetadataKey" type="string" required>
+  The metadata key where subscription ID is stored (e.g., `"subscription_id"`, `"paddle_subscription_id"`)
+</ParamField>
+
+<ResponseField name="licenses" type="LicenseDto[]">
+  Array of license objects matching the subscription ID
+</ResponseField>
+
+**Key Details:**
+- Searches licenses using metadata filters
+- Throws error if no licenses found with the given subscription ID
+- Throws error if the API request fails
+
+**Usage Example:**
+
+```typescript
+// From FastSpring subscription.charge.completed
+const subscriptionId = subscriptionChargeCompletedData.subscription.id;
+const licenses = await getLicensesBySubscriptionId(
+  client,
+  subscriptionId,
+  SUBSCRIPTION_ID_METADATA_KEY
+);
+
+for (const license of licenses) {
+  await client.POST("/v3/licenses/{id}/renew", {
+    params: { path: { id: license.id } }
+  });
+}
+```
+
+**Common Metadata Keys:**
+- Stripe: `"subscription_id"`
+- FastSpring: `"subscription_id"`
+- Paddle: `"paddle_subscription_id"`
+
+**Source:** [licenseActions.ts:23](file:///home/daytona/workspace/source/utils/licenseActions.ts:23)
+
+---
+
+### getLicenseTemplate
+
+Retrieves a license template by ID.
+
+<ParamField path="client" type="CtlxClientType" required>
+  The Cryptlex API client instance
+</ParamField>
+
+<ParamField path="licenseTemplateId" type="string" required>
+  The ID of the license template to retrieve
+</ParamField>
+
+<ResponseField name="template" type="LicensePolicyDto">
+  The license template object containing policy configuration
+</ResponseField>
+
+**Key Details:**
+- Used to validate or extract configuration from license templates
+- Throws descriptive error if template not found
+
+**Usage Example:**
+
+```typescript
+const template = await getLicenseTemplate(client, licenseTemplateId);
+console.log(`Template name: ${template.name}`);
+console.log(`Allowed activations: ${template.allowedActivations}`);
+```
+
+**Source:** [licenseActions.ts:50](file:///home/daytona/workspace/source/utils/licenseActions.ts:50)
+
+## Common Usage Patterns
+
+### Creating a Subscription-Based License
+
+```typescript
+import { createLicense } from '@shared-utils/licenseActions';
+import { insertUser } from '@shared-utils/userActions';
+
+// 1. Create or get user
+const userId = await insertUser(email, customerName, client);
+
+// 2. Create license with subscription metadata
+const result = await createLicense(client, {
+  productId: 'prod_abc123',
+  userId: userId,
+  subscriptionInterval: 'P1M', // Monthly subscription
+  metadata: [
+    {
+      key: 'subscription_id',
+      value: 'sub_xyz789',
+      viewPermissions: []
+    }
+  ]
+});
+```
+
+### Creating a Perpetual License
+
+```typescript
+// Set subscriptionInterval to empty string for perpetual licenses
+const result = await createLicense(client, {
+  productId: 'prod_abc123',
+  userId: userId,
+  subscriptionInterval: '', // Perpetual
+  metadata: [
+    {
+      key: 'order_id',
+      value: 'ord_123',
+      viewPermissions: []
+    }
+  ]
+});
+```
+
+### Renewing Licenses by Subscription ID
+
+```typescript
+import { getLicensesBySubscriptionId } from '@shared-utils/licenseActions';
+
+// 1. Get all licenses for subscription
+const licenses = await getLicensesBySubscriptionId(
+  client,
+  subscriptionId,
+  'subscription_id'
+);
+
+// 2. Renew each license
+for (const license of licenses) {
+  await client.POST('/v3/licenses/{id}/renew', {
+    params: { path: { id: license.id } }
+  });
+}
+```
+
+### Creating Multiple Licenses (Quantity Handling)
+
+```typescript
+// From FastSpring order.completed - handle quantity
+const quantity = item.quantity;
+const licenseRequests = [];
+
+for (let i = 0; i < quantity; i++) {
+  licenseRequests.push(createLicense(client, body));
+}
+
+const results = await Promise.all(licenseRequests);
+```
+
+## Subscription Intervals
+
+Subscription intervals use ISO 8601 duration format:
+
+| Interval | Format | Description |
+|----------|--------|-------------|
+| Daily | `P1D` | 1 day |
+| Weekly | `P1W` | 1 week |
+| Monthly | `P1M` | 1 month |
+| Quarterly | `P3M` | 3 months |
+| Yearly | `P1Y` | 1 year |
+| Perpetual | `""` | Empty string for one-time/perpetual |
+
+**Example from Paddle:**
+
+```typescript
+const frequency = item.price?.billingCycle?.frequency;
+const interval = item.price?.billingCycle?.interval;
+
+switch (interval) {
+  case "month":
+    subscriptionInterval = `P${frequency}M`;
+    break;
+  case "year":
+    subscriptionInterval = `P${frequency}Y`;
+    break;
+  case "week":
+    subscriptionInterval = `P${frequency}W`;
+    break;
+  case "day":
+    subscriptionInterval = `P${frequency}D`;
+    break;
+}
+```
+
+## Error Handling
+
+All functions throw descriptive errors:
+
+```typescript
+// License creation failed
+throw new Error(
+  `License creation failed with error: ${license.error.code} ${license.error.message}. User with ID ${body.userId} has been created.`
+);
+
+// No license found
+throw new Error(`No license found with subscriptionId: ${subscriptionId}`);
+
+// Failed to get licenses
+throw new Error(`Failed to get license(s) with subscriptionId: ${subscriptionId}`);
+
+// Template not found
+throw new Error(
+  `Failed to get license template with id: ${licenseTemplateId}. ${response.error.code}: ${response.error.message}`
+);
+```

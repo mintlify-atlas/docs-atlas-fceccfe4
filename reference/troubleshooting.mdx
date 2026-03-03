@@ -1,0 +1,457 @@
+---
+title: Troubleshooting
+description: Common issues and solutions for Cryptlex Payment Platform Integrations
+---
+
+This guide covers common issues you may encounter when setting up and running the webhook integrations.
+
+## Webhook Signature Verification
+
+<Accordion title="Error: No signature header found">
+  **Error Messages:**
+  - `No stripe-signature header was found.`
+  - `No x-fs-signature header was found.`
+  - `No Paddle-Signature header was found.`
+
+  **Cause:**
+  The webhook request is missing the required signature header.
+
+  **Solutions:**
+  1. Verify webhook is configured correctly in your payment platform dashboard
+  2. Ensure you're sending the webhook to the correct endpoint
+  3. Check that your payment platform account has webhooks enabled
+  4. For testing, verify your HTTP client is forwarding all headers
+
+  **Example Fix:**
+  ```bash
+  # When testing with curl, ensure headers are included
+  curl -X POST https://your-domain.com/stripe/v1 \
+    -H "stripe-signature: t=1234567890,v1=abc..." \
+    -H "Content-Type: application/json" \
+    -d @webhook-payload.json
+  ```
+</Accordion>
+
+<Accordion title="Error: Signature verification failed">
+  **Error Messages:**
+  - `The payload is tampered` (FastSpring)
+  - `Paddle webhook signature verification failed.`
+  - Stripe signature verification errors
+
+  **Cause:**
+  The webhook secret doesn't match or the payload has been modified.
+
+  **Solutions:**
+  1. **Verify webhook secret is correct:**
+     - Stripe: Check `STRIPE_WEBHOOK_SECRET` matches your Stripe dashboard
+     - FastSpring: Verify `FASTSPRING_WEBHOOK_SECRET` matches your webhook configuration
+     - Paddle: Confirm `PADDLE_WEBHOOK_SECRET` is set correctly
+
+  2. **Check for payload modification:**
+     - Ensure no middleware is modifying the request body before verification
+     - Don't parse JSON before signature verification
+     - Use raw body for verification
+
+  3. **Environment variable issues:**
+     ```bash
+     # Verify secrets are loaded
+     echo $STRIPE_WEBHOOK_SECRET
+     echo $FASTSPRING_WEBHOOK_SECRET
+     echo $PADDLE_WEBHOOK_SECRET
+     ```
+
+  **FastSpring HMAC Verification:**
+  ```typescript
+  // Correct implementation
+  const computedSignature = crypto
+    .createHmac('sha256', secret)
+    .update(rawBody) // Must use raw body, not parsed JSON
+    .digest('base64');
+  return computedSignature === signature;
+  ```
+</Accordion>
+
+<Accordion title="Error: Webhook secret not found in environment variables">
+  **Error Messages:**
+  - `STRIPE_WEBHOOK_SECRET was not found in environment variables.`
+  - `FASTSPRING_WEBHOOK_SECRET was not found in environment variables.`
+  - `PADDLE_WEBHOOK_SECRET was not found in environment variables.`
+
+  **Cause:**
+  Required environment variables are not configured.
+
+  **Solutions:**
+  1. Create a `.env` file with all required variables:
+     ```bash
+     # Stripe
+     STRIPE_WEBHOOK_SECRET=whsec_...
+     
+     # FastSpring
+     FASTSPRING_WEBHOOK_SECRET=your_secret_here
+     
+     # Paddle
+     PADDLE_WEBHOOK_SECRET=pdl_ntfset_...
+     
+     # Cryptlex (required for all platforms)
+     CRYPTLEX_ACCESS_TOKEN=your_token_here
+     CRYPTLEX_WEB_API_BASE_URL=https://api.cryptlex.com
+     CRYPTLEX_PRODUCT_ID=prod_...
+     ```
+
+  2. For Cloudflare Workers, set secrets via dashboard or CLI:
+     ```bash
+     wrangler secret put STRIPE_WEBHOOK_SECRET
+     wrangler secret put CRYPTLEX_ACCESS_TOKEN
+     ```
+
+  3. Verify environment variables are loaded at runtime:
+     ```typescript
+     const { STRIPE_WEBHOOK_SECRET } = env(context);
+     console.log('Secret loaded:', !!STRIPE_WEBHOOK_SECRET);
+     ```
+</Accordion>
+
+## Cryptlex API Errors
+
+<Accordion title="Error: CRYPTLEX_ACCESS_TOKEN not found">
+  **Error Message:**
+  `CRYPTLEX_ACCESS_TOKEN was not found in environment variables.`
+
+  **Cause:**
+  The Cryptlex API access token is not configured.
+
+  **Solutions:**
+  1. Generate an access token in your Cryptlex dashboard:
+     - Go to Settings → Access Tokens
+     - Create a new token with appropriate permissions
+     - Copy the token value
+
+  2. Add to environment variables:
+     ```bash
+     CRYPTLEX_ACCESS_TOKEN=your_token_here
+     ```
+
+  3. Ensure token has required permissions:
+     - Read/Write users
+     - Read/Write licenses
+     - Read license templates
+</Accordion>
+
+<Accordion title="Error: User creation/search failed">
+  **Error Messages:**
+  - `User search failed: [error message]`
+  - `User creation failed: [error message]`
+  - `User updation failed: [error message]`
+
+  **Common Causes & Solutions:**
+
+  **1. Duplicate email:**
+  ```
+  Error: User creation failed: Email already exists
+  ```
+  - This is expected behavior - the code handles this with `checkUserExists`
+  - Verify `insertUser` or `upsertUser` is being used (not `createUser` directly)
+
+  **2. Invalid email format:**
+  ```
+  Error: User creation failed: Invalid email
+  ```
+  - Check that email from payment platform is valid
+  - Add validation before user creation:
+  ```typescript
+  if (!email || !email.includes('@')) {
+    throw new Error('Invalid email address');
+  }
+  ```
+
+  **3. Missing required fields:**
+  ```
+  Error: User creation failed: firstName is required
+  ```
+  - Ensure `customerName` is not empty
+  - Use fallback values:
+  ```typescript
+  const userName = event.data.object.name ?? `Customer ${eventId}`;
+  ```
+
+  **4. API permissions:**
+  - Verify access token has user management permissions
+  - Check API base URL is correct
+</Accordion>
+
+<Accordion title="Error: License creation failed">
+  **Error Messages:**
+  - `License creation failed with error: [code] [message]`
+  - `No license template found`
+  - `Product not found`
+
+  **Common Causes & Solutions:**
+
+  **1. Invalid product ID:**
+  ```
+  Error: License creation failed: Product not found
+  ```
+  - Verify `CRYPTLEX_PRODUCT_ID` matches your Cryptlex product
+  - Check product ID in Cryptlex dashboard
+  - Ensure product is active
+
+  **2. Invalid license template:**
+  ```
+  Error: Failed to get license template with id: [id]
+  ```
+  - Verify license template exists in Cryptlex
+  - Check template ID in payment platform product metadata
+  - Ensure template is active
+
+  **3. User doesn't exist:**
+  ```
+  Error: License creation failed: User not found
+  ```
+  - Ensure user is created before license
+  - Verify userId is not null:
+  ```typescript
+  const userId = await insertUser(email, name, client);
+  if (!userId) {
+    throw new Error('Failed to create user');
+  }
+  ```
+
+  **4. Invalid subscription interval:**
+  ```
+  Error: Invalid subscriptionInterval format
+  ```
+  - Use ISO 8601 duration format: `P1M`, `P1Y`, `P1W`, etc.
+  - Use empty string `""` for perpetual licenses
+
+  **5. License limit reached:**
+  - Check your Cryptlex account license limits
+  - Review pricing plan restrictions
+</Accordion>
+
+<Accordion title="Error: No license found with subscriptionId">
+  **Error Message:**
+  `No license found with subscriptionId: [id]`
+
+  **Cause:**
+  Renewal or suspension event fired, but no license exists with that subscription ID in metadata.
+
+  **Solutions:**
+  1. **Verify metadata key is correct:**
+     - Stripe: `subscription_id`
+     - FastSpring: `subscription_id`
+     - Paddle: `paddle_subscription_id`
+
+  2. **Check license was created successfully:**
+     - Review logs for initial purchase event
+     - Verify subscription ID was saved in metadata during creation
+
+  3. **Manually add subscription ID to license:**
+     - Find license in Cryptlex dashboard
+     - Add metadata key-value pair with subscription ID
+
+  4. **Check for timing issues:**
+     - License creation webhook may have failed
+     - Renewal webhook may have arrived before creation completed
+     - Implement retry logic or idempotency
+</Accordion>
+
+## Webhook Event Handling
+
+<Accordion title="Error: Webhook with event type [type] is not supported">
+  **Error Message:**
+  `Webhook with event type checkout.session.async_payment_succeeded is not supported.`
+
+  **Cause:**
+  The integration received a webhook event type it doesn't handle.
+
+  **Solutions:**
+  1. **Add handler for the event:**
+     - Implement handler function
+     - Add case to switch statement in `app.ts`
+     - Update event type list in payment platform dashboard
+
+  2. **Filter events in payment platform:**
+     - Only subscribe to supported events
+     - Review [Webhook Events Reference](/reference/webhook-events)
+
+  3. **Return 200 for unsupported events:**
+     ```typescript
+     default:
+       console.log(`Ignoring unsupported event: ${event.type}`);
+       return context.json({ message: 'Event type not handled' }, 200);
+     ```
+
+  **Supported Events:**
+  - See complete list in [Webhook Events Reference](/reference/webhook-events)
+</Accordion>
+
+<Accordion title="Error: Customer email not found">
+  **Error Messages:**
+  - `Customer email not found in invoice with ID: [id]`
+  - `Customer email not found in checkout session [id]`
+  - `Customer email is required`
+
+  **Cause:**
+  Payment platform webhook doesn't include customer email.
+
+  **Solutions:**
+  1. **Check multiple email fields:**
+     ```typescript
+     // Stripe checkout session
+     const email = event.data.object.customer_email 
+       ?? event.data.object.customer_details?.email;
+     ```
+
+  2. **Require email in checkout:**
+     - Stripe: Set `billing_address_collection: 'required'`
+     - Enable email collection in checkout settings
+
+  3. **Fetch customer details:**
+     ```typescript
+     // Fetch full customer object if email missing
+     const customerId = event.data.object.customer;
+     const customer = await stripe.customers.retrieve(customerId);
+     const email = customer.email;
+     ```
+</Accordion>
+
+<Accordion title="Race condition: Multiple webhooks creating same user">
+  **Issue:**
+  Two webhook events fire simultaneously, both trying to create the same user.
+
+  **Symptoms:**
+  - User creation error followed by successful operation
+  - Duplicate user creation attempts in logs
+
+  **Built-in Solution:**
+  The `insertUser` and `upsertUser` functions handle this:
+  ```typescript
+  try {
+    userId = await createUser(email, customerName, client);
+  } catch (error) {
+    // Check again in case another webhook created the user
+    userId = await checkUserExists(email, client);
+    if (!userId) {
+      throw error;
+    }
+  }
+  ```
+
+  **Best Practices:**
+  - Always use `insertUser` or `upsertUser` (not `createUser` directly)
+  - Implement idempotency keys for critical operations
+  - Log event IDs to track duplicate processing
+</Accordion>
+
+## Deployment Issues
+
+<Accordion title="Cloudflare Workers deployment fails">
+  **Common Issues:**
+
+  **1. Binding errors:**
+  ```
+  Error: Service bindings not configured
+  ```
+  - Update `wrangler.toml` with correct service bindings
+  - Set environment variables via dashboard or CLI
+
+  **2. Size limit exceeded:**
+  ```
+  Error: Worker exceeds size limit
+  ```
+  - Optimize dependencies
+  - Use external modules
+  - Split into multiple workers
+
+  **3. Environment variables:**
+  ```bash
+  # Set secrets for production
+  wrangler secret put STRIPE_WEBHOOK_SECRET --env production
+  wrangler secret put CRYPTLEX_ACCESS_TOKEN --env production
+  ```
+</Accordion>
+
+<Accordion title="CORS errors when testing webhooks">
+  **Error:**
+  `Access-Control-Allow-Origin header missing`
+
+  **Note:**
+  CORS is not relevant for server-to-server webhooks from payment platforms.
+
+  **Solutions:**
+  1. **For payment platform webhooks:** No CORS needed (server-to-server)
+  
+  2. **For browser testing:**
+     ```typescript
+     // Add CORS middleware only for testing
+     app.use('*', cors());
+     ```
+
+  3. **Use proper webhook testing tools:**
+     - Stripe CLI: `stripe listen --forward-to localhost:3000/stripe/v1`
+     - Webhook.site for inspection
+     - Payment platform test modes
+</Accordion>
+
+## Debugging Tips
+
+### Enable Detailed Logging
+
+```typescript
+// Add to handlers for debugging
+console.log('Event received:', JSON.stringify(event, null, 2));
+console.log('User ID:', userId);
+console.log('License created:', license.data?.id);
+```
+
+### Test Webhook Signatures Locally
+
+```bash
+# Stripe CLI
+stripe listen --forward-to http://localhost:8787/stripe/v1
+stripe trigger invoice.paid
+
+# Manual testing with curl
+curl -X POST http://localhost:8787/fastspring/v1 \
+  -H "x-fs-signature: $(echo -n @payload.json | openssl dgst -sha256 -hmac 'your_secret' -binary | base64)" \
+  -d @payload.json
+```
+
+### Verify API Connectivity
+
+```typescript
+// Test Cryptlex API connection
+const response = await client.GET('/v3/users', {
+  params: { query: { limit: 1 } }
+});
+
+if (response.error) {
+  console.error('Cryptlex API error:', response.error);
+} else {
+  console.log('Cryptlex API connected successfully');
+}
+```
+
+### Check Event Processing Order
+
+```typescript
+// Log event timestamps
+console.log('Event ID:', event.id);
+console.log('Event created:', new Date(event.created * 1000).toISOString());
+console.log('Processed at:', new Date().toISOString());
+```
+
+## Getting Help
+
+If you're still experiencing issues:
+
+1. Check the [Webhook Events Reference](/reference/webhook-events) for supported events
+2. Review [User Actions](/reference/user-actions) and [License Actions](/reference/license-actions) documentation
+3. Enable detailed logging and check error messages
+4. Verify all environment variables are set correctly
+5. Test with payment platform webhooks in test mode first
+6. Contact Cryptlex support with:
+   - Event ID
+   - Full error message
+   - Relevant logs
+   - Environment configuration (without secrets)

@@ -1,0 +1,412 @@
+---
+title: 'Paddle Integration'
+description: 'Automatically manage Cryptlex licenses based on Paddle transactions, subscriptions, and customer events'
+---
+
+## Overview
+
+The Paddle integration is a webhook server that manages the complete license lifecycle for Paddle Billing platform. It uses the official Paddle SDK for webhook verification and handles new purchases, recurring renewals, subscription pauses, and customer creation.
+
+**Key capabilities:**
+- Create licenses for new transactions (web, API, and subscription purchases)
+- Automatically renew licenses on recurring subscription payments
+- Resume licenses when subscriptions are updated/resumed
+- Suspend licenses when subscriptions are paused
+- Sync customer data between Paddle and Cryptlex
+- Support for both one-time and subscription pricing
+
+<Note>
+This integration uses Paddle Billing (not Paddle Classic). No Paddle API key is required - webhook verification is handled entirely by the Paddle SDK using your webhook secret.
+</Note>
+
+## Supported Webhook Events
+
+The integration handles three Paddle webhook event types:
+
+<AccordionGroup>
+  <Accordion title="transaction.completed">
+    Triggered when a transaction is successfully completed. Handles multiple transaction origins:
+    
+    **Origin: `web` or `api`** (New purchases)
+    - Creates a user in Cryptlex (or finds existing by Paddle customer ID)
+    - Creates licenses for all items in the transaction
+    - Stores subscription ID or transaction ID in metadata
+    - Supports both subscription and one-time products
+    
+    **Origin: `subscription_recurring`** (Recurring renewals)
+    - Finds licenses by subscription ID
+    - Renews each license to extend expiry date
+    - Unsuspends licenses if they were previously suspended
+    - Updates expiry to match billing period end date
+    
+    **Origin: `subscription_update`** (Subscription resumed)
+    - Finds suspended licenses by subscription ID
+    - Unsuspends each license
+    - Updates expiry date to billing period end date
+    
+    All other origins are logged but not processed.
+  </Accordion>
+  
+  <Accordion title="subscription.paused">
+    Triggered when a subscription is paused in Paddle.
+    
+    **Actions:**
+    - Finds all licenses with matching Paddle subscription ID
+    - Suspends each license to prevent usage
+    
+    Paused licenses can be resumed when a `transaction.completed` event with origin `subscription_update` is received.
+  </Accordion>
+  
+  <Accordion title="customer.created">
+    Triggered when a new customer is created in Paddle.
+    
+    **Actions:**
+    - Creates or updates a user in Cryptlex with customer email and name
+    - Stores Paddle customer ID in Cryptlex user metadata for future lookups
+    - Returns the Cryptlex user ID
+  </Accordion>
+</AccordionGroup>
+
+## Environment Variables
+
+Set these environment variables in your hosting environment:
+
+| Variable | Required | Description |
+|----------|----------|-------------|
+| `PADDLE_WEBHOOK_SECRET` | Yes | Your Paddle webhook secret key for signature verification |
+| `CRYPTLEX_ACCESS_TOKEN` | Yes | Cryptlex API access token with `license:read`, `license:write`, `user:read`, `user:write` permissions |
+| `CRYPTLEX_WEB_API_BASE_URL` | Yes | Base URL of the Cryptlex Web API |
+
+<Warning>
+Keep your `PADDLE_WEBHOOK_SECRET` secure. Never commit it to version control or expose it in client-side code.
+</Warning>
+
+## Setup Instructions
+
+### 1. Deploy the Integration
+
+Choose your deployment method:
+
+**AWS Lambda:**
+Review the provided `aws.yml` GitHub Actions workflow for automated deployments.
+
+**Node.js / Docker:**
+Use the provided Dockerfile to run in any containerized environment.
+
+### 2. Configure Paddle Webhook
+
+1. Log in to your Paddle Dashboard
+2. Go to **Developer Tools > Notifications**
+3. Click **New notification destination**
+4. Set the destination URL: `https://your-domain.com/v1`
+5. Select **Secret key** authentication
+6. Copy the generated secret key and save it as `PADDLE_WEBHOOK_SECRET`
+7. Subscribe to the following event types:
+   - `transaction.completed`
+   - `subscription.paused`
+   - `customer.created`
+8. Save the notification destination
+
+### 3. Configure Product Custom Data
+
+For each Paddle product/price, add custom data to map to Cryptlex:
+
+**Add to product or price custom data (JSON):**
+```json
+{
+  "cryptlex_product_id": "your-cryptlex-product-id",
+  "cryptlex_license_template_id": "your-template-id"
+}
+```
+
+The integration extracts these values from `item.product.customData` or falls back to `item.price.customData`.
+
+### 4. Set Environment Variables
+
+Configure all required environment variables:
+
+```bash
+PADDLE_WEBHOOK_SECRET=pdl_ntfset_...
+CRYPTLEX_ACCESS_TOKEN=your-access-token
+CRYPTLEX_WEB_API_BASE_URL=https://api.cryptlex.com
+```
+
+## Webhook Signature Verification
+
+The integration uses the official Paddle SDK to verify webhook authenticity:
+
+```typescript
+const paddleSignature = context.req.header('Paddle-Signature');
+if (!paddleSignature) {
+  throw new Error('No Paddle-Signature header was found.');
+}
+const rawBody = await context.req.text();
+
+let eventData: EventEntity;
+try {
+  eventData = await paddle.webhooks.unmarshal(
+    rawBody,
+    PADDLE_WEBHOOK_SECRET,
+    paddleSignature
+  );
+} catch (error) {
+  throw new Error('Paddle webhook signature verification failed.');
+}
+```
+
+**How it works:**
+1. Paddle signs each webhook with your secret key
+2. The signature is sent in the `Paddle-Signature` header
+3. The SDK verifies the signature and parses the event
+4. Verification failure throws an error, rejecting the request
+
+<Note>
+The Paddle SDK handles all signature verification complexity, including timestamp validation and signature format parsing.
+</Note>
+
+## Example Workflows
+
+### New Purchase (Web/API)
+
+When a customer completes a purchase:
+
+1. **Event:** `transaction.completed` with origin `web` or `api`
+2. **Handler:** `handleNewLicense`
+3. **Actions:**
+   - Get or create Cryptlex user by Paddle customer ID
+   - Extract product and template IDs from custom data
+   - Determine subscription interval from billing cycle
+   - Create licenses based on item quantity
+   - Store subscription ID (for subscriptions) or transaction ID (for one-time)
+4. **Result:** Customer receives license(s)
+
+```typescript
+const subscriptionInterval = 'P1M'; // Monthly
+const metadata = [
+  {
+    key: 'paddle_subscription_id',
+    value: data.subscriptionId,
+    viewPermissions: []
+  }
+];
+
+await createLicense(client, {
+  productId,
+  licenseTemplateId,
+  userId,
+  metadata,
+  subscriptionInterval
+});
+```
+
+**Subscription interval mapping:**
+- Monthly: `P1M`
+- Yearly: `P1Y`
+- Weekly: `P1W`
+- Daily: `P1D`
+- Custom: `P{frequency}{unit}` (e.g., `P3M` for quarterly)
+
+### Recurring Renewal
+
+When a subscription auto-renews:
+
+1. **Event:** `transaction.completed` with origin `subscription_recurring`
+2. **Handler:** `handleRecurringRenewal`
+3. **Actions:**
+   - Find licenses by Paddle subscription ID
+   - For each license:
+     - If suspended: unsuspend and update expiry
+     - If active: renew to extend expiry
+4. **Result:** Licenses remain valid for next billing period
+
+```typescript
+const licenses = await getLicensesBySubscriptionId(
+  client,
+  subscriptionId,
+  'paddle_subscription_id'
+);
+
+for (const license of licenses) {
+  if (license.suspended) {
+    await client.PATCH('/v3/licenses/{id}', {
+      params: { path: { id: license.id } },
+      body: { suspended: false }
+    });
+    await client.PATCH('/v3/licenses/{id}/expires-at', {
+      params: { path: { id: license.id } },
+      body: { expiresAt: nextBilledAt }
+    });
+  } else {
+    await client.POST('/v3/licenses/{id}/renew', {
+      params: { path: { id: license.id } }
+    });
+  }
+}
+```
+
+<Note>
+The handler checks for suspended licenses because Paddle may send `subscription_recurring` for resumed subscriptions depending on how the resume was triggered.
+</Note>
+
+### Subscription Paused
+
+When a customer pauses their subscription:
+
+1. **Event:** `subscription.paused`
+2. **Handler:** `handleSubscriptionPaused`
+3. **Actions:**
+   - Find licenses by subscription ID
+   - Suspend each license
+4. **Result:** License usage blocked until resumed
+
+```typescript
+const licenses = await getLicensesBySubscriptionId(
+  client,
+  subscriptionId,
+  'paddle_subscription_id'
+);
+
+for (const license of licenses) {
+  await client.PATCH('/v3/licenses/{id}', {
+    params: { path: { id: license.id } },
+    body: { suspended: true }
+  });
+}
+```
+
+### Subscription Resumed
+
+When a paused subscription is resumed:
+
+1. **Event:** `transaction.completed` with origin `subscription_update`
+2. **Handler:** `handleSubscriptionResume`
+3. **Actions:**
+   - Find suspended licenses by subscription ID
+   - Unsuspend each license
+   - Update expiry to billing period end
+4. **Result:** Licenses reactivated
+
+```typescript
+for (const license of licenses) {
+  if (!license.suspended) continue;
+  
+  await client.PATCH('/v3/licenses/{id}', {
+    params: { path: { id: license.id } },
+    body: { suspended: false }
+  });
+  
+  if (nextBilledAt) {
+    await client.PATCH('/v3/licenses/{id}/expires-at', {
+      params: { path: { id: license.id } },
+      body: { expiresAt: nextBilledAt }
+    });
+  }
+}
+```
+
+### Customer Creation
+
+When a customer is created:
+
+1. **Event:** `customer.created`
+2. **Handler:** `handleCustomerCreated`
+3. **Actions:**
+   - Create or update user with email and name
+   - Store Paddle customer ID in user metadata
+4. **Result:** User ready for license assignment
+
+## One-Time vs. Subscription Products
+
+The integration automatically detects product type:
+
+**One-time products** (no billing cycle):
+- Store transaction ID in metadata: `paddle_transaction_id`
+- Set `subscriptionInterval` to empty string (perpetual)
+- No automatic renewals
+
+**Subscription products** (has billing cycle):
+- Store subscription ID in metadata: `paddle_subscription_id`
+- Set `subscriptionInterval` based on billing cycle
+- Automatic renewals on `transaction.completed` with origin `subscription_recurring`
+
+```typescript
+let oneTimeProductPrice: string[] = [];
+for (const item of data.items) {
+  if (!item.price?.billingCycle) {
+    oneTimeProductPrice.push(item.price.id);
+  }
+}
+
+// Later when creating license:
+subscriptionInterval: oneTimeProductPrice.includes(item.priceId)
+  ? '' // Perpetual
+  : subscriptionInterval // e.g., 'P1M'
+```
+
+## FAQ
+
+<AccordionGroup>
+  <Accordion title="What's the difference between Paddle Classic and Paddle Billing?">
+    This integration is for **Paddle Billing** (the new platform). Paddle Classic is deprecated. If you're on Paddle Classic, you'll need a different integration approach.
+  </Accordion>
+  
+  <Accordion title="How are quantity-based purchases handled?">
+    The integration creates multiple licenses based on `item.quantity`. For example, quantity of 3 creates 3 separate licenses, all linked to the same transaction or subscription.
+  </Accordion>
+  
+  <Accordion title="What happens if webhook verification fails?">
+    The Paddle SDK throws an error and the request is rejected with HTTP 400. Paddle will retry the webhook automatically.
+  </Accordion>
+  
+  <Accordion title="Can I use this for free trials?">
+    Yes! Paddle supports trial periods. The integration creates licenses when the trial converts to a paid subscription (transaction.completed event).
+  </Accordion>
+  
+  <Accordion title="How do I handle subscription cancellations?">
+    Subscribe to the `subscription.canceled` event in your Paddle webhook settings, then add a handler to suspend or delete licenses. The current integration doesn't handle cancellations by default.
+  </Accordion>
+  
+  <Accordion title="Why does subscription_recurring sometimes unsuspend licenses?">
+    Paddle may send different origin values depending on how a subscription is resumed. The integration handles both `subscription_recurring` and `subscription_update` to cover all resume scenarios.
+  </Accordion>
+</AccordionGroup>
+
+## Error Handling
+
+All handlers provide detailed error context:
+
+```typescript
+throw new Error(
+  `Could not process the transaction.completed webhook event with Id ${eventId}. 
+  ${userId ? `User ID: ${userId} created.` : 'User ID not created.'} 
+  ${licenses.length ? `Licenses created: ${licenses.map(l => l.id).join(', ')}.` : 'No license created.'} 
+  ${error.message}`
+);
+```
+
+This helps you:
+- Identify partial successes
+- Recover from failures manually
+- Debug issues efficiently
+
+<Warning>
+Monitor your webhook logs in the Paddle Dashboard regularly to catch and resolve any processing errors.
+</Warning>
+
+## Testing
+
+Paddle provides webhook testing tools:
+
+1. **Sandbox mode**: Test webhooks in Paddle's sandbox environment
+2. **Webhook replays**: Replay past events from the Paddle Dashboard
+3. **Local testing**: Use ngrok or similar tools to tunnel webhooks to localhost
+
+```bash
+# Example: Tunnel to local server
+ngrok http 3000
+# Set Paddle webhook URL to: https://your-id.ngrok.io/v1
+```
+
+## Support
+
+If you have questions or experience issues, contact Cryptlex support at [support@cryptlex.com](mailto:support@cryptlex.com).

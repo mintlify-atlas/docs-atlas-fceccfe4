@@ -1,0 +1,169 @@
+---
+title: 'AWS Lambda Deployment'
+description: 'Deploy your webhook server to AWS Lambda using GitHub Actions'
+---
+
+## Overview
+
+The webhook server can be deployed to AWS Lambda using the provided GitHub Actions workflow. This serverless deployment option is ideal for production environments requiring high availability and automatic scaling.
+
+## Prerequisites
+
+Before deploying to AWS Lambda, ensure you have:
+
+- An AWS account with Lambda access
+- AWS credentials with appropriate permissions
+- A GitHub repository with the source code
+- Your payment platform credentials and Cryptlex configuration
+
+## Required IAM Permissions
+
+Your AWS IAM user needs the following permissions:
+
+- `lambda:UpdateFunctionCode` - Update Lambda function code
+- `lambda:GetFunction` - Retrieve function configuration
+- `lambda:UpdateFunctionConfiguration` - Update runtime settings
+
+<Warning>
+  Use the principle of least privilege. Create a dedicated IAM user specifically for Lambda deployments rather than using your root account credentials.
+</Warning>
+
+## GitHub Secrets Configuration
+
+<Steps>
+  <Step title="Navigate to Repository Settings">
+    Go to your GitHub repository and navigate to **Settings** > **Secrets and variables** > **Actions**.
+  </Step>
+  
+  <Step title="Add AWS Credentials">
+    Add the following repository secrets:
+    
+    - `AWS_LAMBDA_ACCESS_KEY_ID` - Your AWS access key ID
+    - `AWS_LAMBDA_SECRET_ACCESS_KEY` - Your AWS secret access key
+    - `AWS_LAMBDA_REGION` - The AWS region where your Lambda function is deployed (e.g., `us-east-1`)
+    - `AWS_LAMBDA_FUNCTION_NAME` - The name of your Lambda function
+  </Step>
+  
+  <Step title="Configure Environment Variables">
+    In the AWS Lambda console, configure the environment variables for your function. See the [Environment Variables](/deployment/environment-variables) reference for the complete list.
+  </Step>
+</Steps>
+
+## Deployment Process
+
+The GitHub Actions workflow automates the entire deployment process:
+
+<Steps>
+  <Step title="Trigger Workflow">
+    Navigate to **Actions** in your GitHub repository, select **Deploy AWS Lambda**, and click **Run workflow**.
+    
+    Select your payment platform:
+    - Stripe
+    - FastSpring
+    - Paddle
+  </Step>
+  
+  <Step title="Build Process">
+    The workflow will:
+    
+    1. Check out the `main` branch
+    2. Set up Node.js 22.x
+    3. Install dependencies with `npm ci`
+    4. Build the platform-specific Lambda bundle using `npm run build:<platform>:aws`
+    5. Create a deployment zip file from the `dist` directory
+  </Step>
+  
+  <Step title="Deploy to Lambda">
+    The workflow automatically deploys the zip bundle to your Lambda function using the configured AWS credentials.
+  </Step>
+  
+  <Step title="Verify Deployment">
+    Check the Actions tab for deployment status. Once complete, verify in the AWS Lambda console that your function has been updated.
+  </Step>
+</Steps>
+
+## Build Scripts
+
+Each payment platform has a dedicated AWS build script:
+
+```bash
+npm run build:stripe:aws      # Build Stripe integration for Lambda
+npm run build:fastspring:aws  # Build FastSpring integration for Lambda
+npm run build:paddle:aws      # Build Paddle integration for Lambda
+```
+
+These scripts:
+- Compile TypeScript to JavaScript
+- Bundle the application using esbuild
+- Target Node.js 22.x runtime
+- Output a single `index.js` file optimized for Lambda
+
+## Lambda Configuration
+
+### Runtime Settings
+
+- **Runtime**: Node.js 22.x
+- **Handler**: `index.handler` (default)
+- **Architecture**: x86_64 or arm64
+
+### Recommended Settings
+
+- **Memory**: 512 MB (adjust based on your workload)
+- **Timeout**: 30 seconds (webhook processing should complete quickly)
+- **Ephemeral storage**: 512 MB (default)
+
+### Function URL Configuration
+
+For Lambda to receive webhook events, you need to configure a Function URL:
+
+1. In the Lambda console, go to your function
+2. Navigate to **Configuration** > **Function URL**
+3. Click **Create function URL**
+4. Select **Auth type**: NONE (webhooks use signature verification instead)
+5. Save the generated URL
+6. Configure this URL as your webhook endpoint in your payment platform
+
+<Info>
+  The webhook server validates all incoming requests using platform-specific signature verification, so authentication at the Lambda level is not required.
+</Info>
+
+## Monitoring and Logs
+
+Monitor your Lambda function using CloudWatch:
+
+- **Logs**: View execution logs in CloudWatch Logs under `/aws/lambda/<function-name>`
+- **Metrics**: Monitor invocations, errors, and duration in the Lambda console
+- **Alarms**: Set up CloudWatch alarms for error rates and throttling
+
+## Troubleshooting
+
+### Deployment Fails
+
+- Verify AWS credentials are correctly set in GitHub Secrets
+- Check IAM permissions for the deployment user
+- Ensure the Lambda function exists in the specified region
+
+### Webhook Verification Fails
+
+- Confirm environment variables are set in Lambda configuration
+- Check CloudWatch logs for specific error messages
+- Verify webhook secrets match your payment platform configuration
+
+### Cold Start Performance
+
+If you experience cold start latency:
+
+- Consider increasing memory allocation (improves CPU performance)
+- Enable Provisioned Concurrency for critical workloads
+- Monitor CloudWatch metrics for initialization duration
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Environment Variables" icon="gear" href="/deployment/environment-variables">
+    Configure all required environment variables for your deployment
+  </Card>
+  <Card title="Docker Deployment" icon="docker" href="/deployment/docker-nodejs">
+    Alternative deployment using Docker containers
+  </Card>
+</CardGroup>

@@ -1,0 +1,83 @@
+---
+title: Payment platform integrations
+description: Automate Cryptlex user and license management with webhook integrations for Stripe, FastSpring, and Paddle
+---
+
+## Overview
+
+The Cryptlex Payment Platform Integrations are lightweight webhook servers that automatically synchronize payment events from Stripe, FastSpring, and Paddle with your Cryptlex account. When a customer completes a purchase or subscription payment, these integrations create users, issue licenses, and manage license lifecycles without manual intervention.
+
+Built with the Hono framework and TypeScript, these integrations are production-ready and can be deployed to AWS Lambda, Docker, or any Node.js environment.
+
+## What it does
+
+When a payment event occurs in your payment platform, the webhook server:
+
+1. Receives and verifies the webhook signature for security
+2. Creates or updates the customer as a Cryptlex user
+3. Issues a new license or renews an existing one
+4. Manages license status based on subscription events (suspend, resume, delete)
+
+All of this happens automatically in real-time as payments are processed.
+
+## Choose your integration
+
+<CardGroup cols={3}>
+  <Card title="Stripe" icon="stripe" href="/integrations/stripe">
+    Connect Stripe checkout sessions and invoices to Cryptlex licenses
+  </Card>
+  
+  <Card title="FastSpring" icon="cart-shopping" href="/integrations/fastspring">
+    Integrate FastSpring orders and subscriptions with Cryptlex
+  </Card>
+  
+  <Card title="Paddle" icon="water" href="/integrations/paddle">
+    Sync Paddle transactions and subscriptions to Cryptlex licenses
+  </Card>
+</CardGroup>
+
+## Key features
+
+- **Automatic user creation**: Customers from your payment platform become Cryptlex users automatically
+- **License lifecycle management**: Creates, renews, suspends, and deletes licenses based on payment events
+- **Secure webhook verification**: All webhook payloads are cryptographically verified before processing
+- **Multiple deployment options**: Deploy to AWS Lambda, Docker containers, or standard Node.js servers
+- **TypeScript and type-safe**: Built with strict TypeScript for reliability and maintainability
+- **Production-ready**: Includes error handling, logging, and tested event handlers
+
+## Quick example
+
+When a Stripe customer completes checkout:
+
+```json
+{
+  "type": "checkout.session.completed",
+  "data": {
+    "object": {
+      "customer_email": "customer@example.com",
+      "metadata": {
+        "cryptlex_product_id": "your-product-id"
+      }
+    }
+  }
+}
+```
+
+The integration automatically:
+
+1. Creates a Cryptlex user with email `customer@example.com`
+2. Issues a license for the specified product
+3. Associates the license with the user
+4. Returns success to Stripe
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="Overview" icon="diagram-project" href="/overview">
+    Learn how the integrations work and their architecture
+  </Card>
+  
+  <Card title="Quick start" icon="rocket" href="/quickstart">
+    Get your webhook server running in minutes
+  </Card>
+</CardGroup>

@@ -1,0 +1,269 @@
+---
+title: User Management Functions
+description: Utility functions for creating and managing Cryptlex users from payment platform webhooks
+---
+
+The `userActions.ts` module provides utility functions for managing Cryptlex users from payment platform webhook events.
+
+## Functions
+
+### checkUserExists
+
+Checks if a user exists by email address.
+
+<ParamField path="email" type="string" required>
+  The email address to search for
+</ParamField>
+
+<ParamField path="client" type="CtlxClientType" required>
+  The Cryptlex API client instance
+</ParamField>
+
+<ResponseField name="userId" type="string | null">
+  Returns the user ID if found, or `null` if no user exists with that email
+</ResponseField>
+
+**Implementation:**
+
+```typescript
+async function checkUserExists(email: string, client: CtlxClientType) {
+    let userId: string | null = null
+    const userResponse = await client.GET('/v3/users', {
+        params: {
+            query: {
+                email: { eq: email },
+            },
+        },
+    })
+    if (userResponse.error) {
+        throw new Error(`User search failed: ${userResponse.error.message}.`)
+    }
+    if (userResponse.data[0]) {
+        userId = userResponse.data[0].id
+    }
+    return userId
+}
+```
+
+**Source:** [userActions.ts:5](file:///home/daytona/workspace/source/utils/userActions.ts:5)
+
+---
+
+### createUser
+
+Creates a new user in Cryptlex with the provided details.
+
+<ParamField path="email" type="string" required>
+  User's email address
+</ParamField>
+
+<ParamField path="customerName" type="string" required>
+  User's first name (from payment platform)
+</ParamField>
+
+<ParamField path="client" type="CtlxClientType" required>
+  The Cryptlex API client instance
+</ParamField>
+
+<ParamField path="lastName" type="string" optional>
+  User's last name
+</ParamField>
+
+<ParamField path="company" type="string" optional>
+  User's company name
+</ParamField>
+
+<ParamField path="metadata" type="Array<{ key: string; value: string; viewPermissions?: [] }>" optional>
+  Additional metadata to attach to the user
+</ParamField>
+
+<ResponseField name="userId" type="string">
+  The ID of the newly created user
+</ResponseField>
+
+**Key Details:**
+- Generates a random 10-character password using `nanoid(10)`
+- Sets user role to `'user'`
+- Only includes optional fields if they are defined and not null
+
+**Usage Example:**
+
+```typescript
+const userId = await createUser(
+  'customer@example.com',
+  'John',
+  client,
+  'Doe',
+  'Acme Inc'
+);
+```
+
+**Source:** [userActions.ts:23](file:///home/daytona/workspace/source/utils/userActions.ts:23)
+
+---
+
+### updateUser
+
+Updates an existing user's details.
+
+<ParamField path="userId" type="string" required>
+  The ID of the user to update
+</ParamField>
+
+<ParamField path="customerName" type="string" required>
+  New first name (only updated if not empty)
+</ParamField>
+
+<ParamField path="client" type="CtlxClientType" required>
+  The Cryptlex API client instance
+</ParamField>
+
+<ParamField path="lastName" type="string" optional>
+  New last name
+</ParamField>
+
+<ParamField path="company" type="string" optional>
+  New company name
+</ParamField>
+
+<ParamField path="email" type="string | null" optional>
+  New email address (only updated if not empty or null)
+</ParamField>
+
+<ResponseField name="userId" type="string">
+  The ID of the updated user
+</ResponseField>
+
+**Key Details:**
+- Only includes fields in the update request if they are defined and not null/empty
+- Uses PATCH request to `/v3/users/{id}`
+
+**Usage Example:**
+
+```typescript
+const userId = await updateUser(
+  'usr_abc123',
+  'Jane',
+  client,
+  'Smith',
+  'New Company Inc'
+);
+```
+
+**Source:** [userActions.ts:63](file:///home/daytona/workspace/source/utils/userActions.ts:63)
+
+---
+
+### insertUser
+
+Checks for an existing user with the same email or creates a new one if it doesn't exist. Returns the user ID.
+
+<ParamField path="email" type="string" required>
+  User's email address
+</ParamField>
+
+<ParamField path="customerName" type="string" required>
+  Name to be set for the created user
+</ParamField>
+
+<ParamField path="client" type="CtlxClientType" required>
+  The Cryptlex API client instance
+</ParamField>
+
+<ParamField path="lastName" type="string" optional>
+  User's last name
+</ParamField>
+
+<ParamField path="company" type="string" optional>
+  User's company name
+</ParamField>
+
+<ResponseField name="userId" type="string | null">
+  The user ID (existing or newly created)
+</ResponseField>
+
+**Key Details:**
+- Handles race conditions: if two webhook events try to create the same user simultaneously, it checks again after creation failure
+- Does NOT update existing users (use `upsertUser` for that)
+
+**Usage Example:**
+
+```typescript
+// From Stripe invoice.paid handler
+const email = invoice.customer_email;
+const userName = invoice.customer_name ?? `Stripe Invoice ${invoice.id}`;
+const userId = await insertUser(email, userName, client);
+```
+
+**Source:** [userActions.ts:114](file:///home/daytona/workspace/source/utils/userActions.ts:114)
+
+---
+
+### upsertUser
+
+Updates an existing user with the same email or creates a new one if it doesn't exist. Returns the user ID.
+
+<ParamField path="email" type="string" required>
+  User's email address
+</ParamField>
+
+<ParamField path="customerName" type="string" required>
+  Name to be set for the user
+</ParamField>
+
+<ParamField path="client" type="CtlxClientType" required>
+  The Cryptlex API client instance
+</ParamField>
+
+<ParamField path="lastName" type="string" optional>
+  User's last name
+</ParamField>
+
+<ParamField path="company" type="string" optional>
+  User's company name
+</ParamField>
+
+<ResponseField name="userId" type="string | null">
+  The user ID (existing or newly created)
+</ResponseField>
+
+**Key Details:**
+- Unlike `insertUser`, this function WILL update existing users
+- Handles race conditions similar to `insertUser`
+- Preferred for customer creation events where you want to ensure the latest data
+
+**Usage Example:**
+
+```typescript
+// From Stripe customer.created handler
+const email = event.data.object.email;
+const userName = event.data.object.name;
+const userId = await upsertUser(email, userName, client);
+```
+
+**Source:** [userActions.ts:145](file:///home/daytona/workspace/source/utils/userActions.ts:145)
+
+## When to Use Each Function
+
+| Function | Use Case |
+|----------|----------|
+| `checkUserExists` | Internal helper - not typically called directly |
+| `createUser` | When you're certain a new user needs to be created |
+| `updateUser` | When you have a user ID and need to update details |
+| `insertUser` | For license creation events where you need a user ID but shouldn't modify existing users |
+| `upsertUser` | For customer creation/update events where you want to keep user data in sync |
+
+## Error Handling
+
+All functions throw descriptive errors:
+
+```typescript
+// User search failed
+throw new Error(`User search failed: ${userResponse.error.message}.`)
+
+// User creation failed
+throw new Error(`User creation failed: ${user.error.message}`);
+
+// User update failed
+throw new Error(`User updation failed: ${user.error.message}`);
+```

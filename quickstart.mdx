@@ -1,80 +1,278 @@
 ---
-title: "Quickstart"
-description: "Start building awesome documentation in minutes"
+title: Quick start
+description: Deploy your first Cryptlex payment integration in minutes
 ---
 
-## Get started in three steps
+This guide will get you from zero to a running webhook server that creates Cryptlex users and licenses from payment events. We'll use the Stripe integration as an example, but the process is similar for FastSpring and Paddle.
 
-Get your documentation site running locally and make your first customization.
+## Prerequisites
 
-### Step 1: Set up your local environment
+Before you begin, you'll need:
 
-<AccordionGroup>
-  <Accordion icon="copy" title="Clone your docs locally">
-    During the onboarding process, you created a GitHub repository with your docs content if you didn't already have one. You can find a link to this repository in your [dashboard](https://dashboard.mintlify.com).
-    
-    To clone the repository locally so that you can make and preview changes to your docs, follow the [Cloning a repository](https://docs.github.com/en/repositories/creating-and-managing-repositories/cloning-a-repository) guide in the GitHub docs.
-  </Accordion>
-  <Accordion icon="rectangle-terminal" title="Start the preview server">
-    1. Install the Mintlify CLI: `npm i -g mint`
-    2. Navigate to your docs directory and run: `mint dev`
-    3. Open `http://localhost:3000` to see your docs live!
-    
-    <Tip>Your preview updates automatically as you edit files.</Tip>
-  </Accordion>
-</AccordionGroup>
+- A Cryptlex account with API access
+- A Stripe account (or FastSpring/Paddle for other integrations)
+- Node.js 22 or later installed
+- Git for cloning the repository
 
-### Step 2: Deploy your changes
+## Installation
 
-<AccordionGroup>
-  <Accordion icon="github" title="Install our GitHub app">
-    Install the Mintlify GitHub app from your [dashboard](https://dashboard.mintlify.com/settings/organization/github-app).
-    
-    Our GitHub app automatically deploys your changes to your docs site, so you don't need to manage deployments yourself.
-</Accordion>
-<Accordion icon="palette" title="Update your site name and colors">
-    For a first change, let's update the name and colors of your docs site.
+<Steps>
+  <Step title="Clone the repository">
+    Clone the integration repository to your local machine:
 
-    1. Open `docs.json` in your editor.
-    2. Change the `"name"` field to your project name.
-    3. Update the `"colors"` to match your brand.
-    4. Save and see your changes instantly at `http://localhost:3000`.
+    <CodeGroup>
+    ```bash npm
+    git clone https://github.com/cryptlex/payment-platform-integrations.git
+    cd payment-platform-integrations
+    ```
 
-    <Tip>Try changing the primary color to see an immediate difference!</Tip>
-  </Accordion>
-</AccordionGroup>
+    ```bash yarn
+    git clone https://github.com/cryptlex/payment-platform-integrations.git
+    cd payment-platform-integrations
+    ```
 
-### Step 3: Go live
+    ```bash pnpm
+    git clone https://github.com/cryptlex/payment-platform-integrations.git
+    cd payment-platform-integrations
+    ```
+    </CodeGroup>
+  </Step>
 
-<Accordion icon="rocket" title="Publish your docs">
-  1. Commit and push your changes.
-  2. Your docs will update and be live in moments!
-</Accordion>
+  <Step title="Install dependencies">
+    Install the required npm packages:
+
+    <CodeGroup>
+    ```bash npm
+    npm install
+    ```
+
+    ```bash yarn
+    yarn install
+    ```
+
+    ```bash pnpm
+    pnpm install
+    ```
+    </CodeGroup>
+  </Step>
+
+  <Step title="Configure environment variables">
+    Create a `.env` file in the project root with your configuration:
+
+    **For Stripe:**
+    ```bash
+    STRIPE_WEBHOOK_SECRET=whsec_your_webhook_secret_here
+    CRYPTLEX_PRODUCT_ID=your-cryptlex-product-id
+    CRYPTLEX_ACCESS_TOKEN=your-cryptlex-access-token
+    CRYPTLEX_WEB_API_BASE_URL=https://api.cryptlex.com/v3
+    ```
+
+    **For FastSpring:**
+    ```bash
+    FASTSPRING_WEBHOOK_SECRET=your-hmac-secret
+    CRYPTLEX_ACCESS_TOKEN=your-cryptlex-access-token
+    CRYPTLEX_WEB_API_BASE_URL=https://api.cryptlex.com/v3
+    ```
+
+    **For Paddle:**
+    ```bash
+    PADDLE_WEBHOOK_SECRET=your-paddle-webhook-secret
+    CRYPTLEX_ACCESS_TOKEN=your-cryptlex-access-token
+    CRYPTLEX_WEB_API_BASE_URL=https://api.cryptlex.com/v3
+    ```
+
+    <Info>
+    Your Cryptlex access token needs the following permissions: `license:read`, `license:write`, `user:read`, `user:write`
+    </Info>
+  </Step>
+
+  <Step title="Build the server">
+    Build the webhook server for your chosen platform:
+
+    <CodeGroup>
+    ```bash Stripe
+    npm run build:stripe:node
+    ```
+
+    ```bash FastSpring
+    npm run build:fastspring:node
+    ```
+
+    ```bash Paddle
+    npm run build:paddle:node
+    ```
+    </CodeGroup>
+
+    This compiles TypeScript and bundles the application into `./dist/index.node.js`.
+  </Step>
+
+  <Step title="Run the server">
+    Start the webhook server:
+
+    ```bash
+    node dist/index.node.js
+    ```
+
+    The server starts on port 9890 by default and listens for webhooks at `/v1`.
+
+    <Note>
+    The server expects environment variables to be available. You can use a tool like `dotenv` or set them directly in your shell.
+    </Note>
+  </Step>
+</Steps>
+
+## Testing with a webhook
+
+Now that your server is running, let's test it with a webhook event.
+
+<Steps>
+  <Step title="Expose your local server">
+    Use a tool like ngrok to expose your local server to the internet:
+
+    ```bash
+    ngrok http 9890
+    ```
+
+    Copy the HTTPS forwarding URL (e.g., `https://abc123.ngrok.io`).
+  </Step>
+
+  <Step title="Configure webhook in your payment platform">
+    Add the webhook endpoint in your payment platform's dashboard:
+
+    **Stripe:**
+    - Go to Developers → Webhooks in the Stripe Dashboard
+    - Click "Add endpoint"
+    - Enter your URL: `https://abc123.ngrok.io/v1`
+    - Select events: `checkout.session.completed`, `invoice.paid`, `customer.created`
+    - Copy the webhook signing secret to your `.env` file
+
+    **FastSpring:**
+    - Go to Integrations → Webhooks in FastSpring
+    - Add your webhook URL: `https://abc123.ngrok.io/v1`
+    - Generate an HMAC secret and add it to your `.env` file
+    - Subscribe to: `order.completed`, `subscription.charge.completed`, `subscription.payment.overdue`, `subscription.deactivated`
+
+    **Paddle:**
+    - Go to Developer Tools → Notifications in Paddle
+    - Add webhook destination: `https://abc123.ngrok.io/v1`
+    - Copy the webhook secret to your `.env` file
+    - Select events: `transaction.completed`, `subscription.paused`, `customer.created`
+  </Step>
+
+  <Step title="Trigger a test event">
+    Use your payment platform's test mode to trigger a webhook event:
+
+    **Stripe:**
+    - Use the Stripe CLI to trigger a test event:
+    ```bash
+    stripe trigger checkout.session.completed
+    ```
+
+    **FastSpring/Paddle:**
+    - Create a test order in their respective dashboards
+  </Step>
+
+  <Step title="Verify the integration">
+    Check your server logs to see the webhook being processed:
+
+    ```
+    Stripe webhook event:evt_test_123 with type:checkout.session.completed verified.
+    Created user: user@example.com
+    Created license: license-key-abc123
+    ```
+
+    Then verify in your Cryptlex dashboard that the user and license were created.
+  </Step>
+</Steps>
+
+<Warning>
+Make sure to update your webhook secret in the `.env` file if you're testing with the Stripe CLI. The CLI uses a different webhook secret than your Stripe Dashboard webhooks.
+</Warning>
+
+## Deployment
+
+Once you've tested locally, deploy to production:
+
+### Deploy with Docker
+
+Build and run the Docker container:
+
+```bash
+# Build for your chosen platform
+docker build --build-arg PAYMENT_PLATFORM=stripe -t cryptlex-stripe .
+
+# Run the container with environment variables
+docker run -p 9890:9890 \
+  -e STRIPE_WEBHOOK_SECRET=whsec_your_secret \
+  -e CRYPTLEX_PRODUCT_ID=your_product_id \
+  -e CRYPTLEX_ACCESS_TOKEN=your_token \
+  -e CRYPTLEX_WEB_API_BASE_URL=https://api.cryptlex.com/v3 \
+  cryptlex-stripe
+```
+
+Replace `stripe` with `fastspring` or `paddle` for other integrations.
+
+### Deploy to AWS Lambda
+
+The repository includes a GitHub Actions workflow for AWS Lambda deployment:
+
+1. Review `.github/workflows/aws.yml` for setup instructions
+2. Configure AWS credentials as GitHub secrets
+3. Build using the AWS target: `npm run build:stripe:aws`
+4. Deploy using the GitHub Actions workflow
+
+<Info>
+For detailed deployment guides specific to each platform, see the individual integration documentation.
+</Info>
+
+## What happens next
+
+Once deployed, your webhook server will:
+
+1. **Automatically create users** - When customers complete payments, they become Cryptlex users
+2. **Issue licenses** - Each purchase or subscription generates a license
+3. **Manage lifecycle** - Renewals, suspensions, and cancellations are handled automatically
+4. **Verify security** - All webhooks are cryptographically verified before processing
+
+You can monitor webhook activity in your payment platform's dashboard and see the resulting users and licenses in Cryptlex.
 
 ## Next steps
 
-Now that you have your docs running, explore these key features:
-
 <CardGroup cols={2}>
-
-<Card title="Write Content" icon="pen-to-square" href="/essentials/markdown">
-  Learn MDX syntax and start writing your documentation.
-</Card>
-
-<Card title="Customize style" icon="palette" href="/essentials/settings">
-  Make your docs match your brand perfectly.
-</Card>
-
-<Card title="Add code examples" icon="square-code" href="/essentials/code">
-  Include syntax-highlighted code blocks.
-</Card>
-
-<Card title="API documentation" icon="code" href="/api-reference/introduction">
-  Auto-generate API docs from OpenAPI specs.
-</Card>
-
+  <Card title="Stripe integration" icon="stripe" href="/integrations/stripe">
+    Detailed guide for Stripe setup and configuration
+  </Card>
+  
+  <Card title="FastSpring integration" icon="cart-shopping" href="/integrations/fastspring">
+    Complete FastSpring integration documentation
+  </Card>
+  
+  <Card title="Paddle integration" icon="water" href="/integrations/paddle">
+    Full Paddle integration setup guide
+  </Card>
+  
+  <Card title="Deployment options" icon="server" href="/overview#deployment-options">
+    Learn about AWS Lambda, Docker, and Node.js deployments
+  </Card>
 </CardGroup>
 
+## Troubleshooting
+
+**Webhook verification fails:**
+- Double-check that your webhook secret matches the one from your payment platform
+- Ensure you're using the correct secret for test vs. production mode
+- Verify that the webhook signature header is being sent correctly
+
+**User or license not created:**
+- Check that your Cryptlex access token has the required permissions
+- Verify that the `CRYPTLEX_PRODUCT_ID` is correct (for Stripe)
+- Look at server logs for detailed error messages
+
+**Environment variables not found:**
+- Make sure your `.env` file is in the correct location
+- If using Docker, ensure environment variables are passed with `-e` flags
+- For AWS Lambda, configure environment variables in the Lambda console
+
 <Note>
-  **Need help?** See our [full documentation](https://mintlify.com/docs) or join our [community](https://mintlify.com/community).
+For additional support, contact [support@cryptlex.com](mailto:support@cryptlex.com) or consult the platform-specific integration guides.
 </Note>

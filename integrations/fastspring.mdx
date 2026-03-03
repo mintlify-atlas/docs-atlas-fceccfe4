@@ -1,0 +1,395 @@
+---
+title: 'FastSpring Integration'
+description: 'Automatically manage Cryptlex licenses based on FastSpring orders, subscriptions, and payment events'
+---
+
+## Overview
+
+The FastSpring integration is a webhook server that handles the complete license lifecycle: creation, renewal, suspension, and deletion based on FastSpring events. It supports both one-time purchases and subscriptions, including bundles and add-ons.
+
+**Key capabilities:**
+- Create licenses for orders and subscriptions
+- Renew licenses on successful subscription charges
+- Suspend licenses when payments are overdue
+- Delete licenses when subscriptions are deactivated
+- Support for bundles and subscription add-ons
+- Quantity-based license creation
+
+## Supported Webhook Events
+
+The integration handles four FastSpring webhook event types:
+
+<AccordionGroup>
+  <Accordion title="order.completed">
+    Triggered when an order is successfully completed (both one-time and subscription orders).
+    
+    **Actions:**
+    - Creates a user in Cryptlex based on customer email
+    - Creates licenses for all items in the order
+    - Handles bundles (products with `driver.type: bundle`)
+    - Handles add-ons (products with `driver.type: addon` and `parentSubscription`)
+    - Supports quantity mapping to either license count or allowed activations
+    - Stores subscription ID or order ID in license metadata
+    
+    **Metadata stored:**
+    - `subscription_id` for subscription-based licenses
+    - `order_id` for one-time purchases
+    - `driver` for bundles and add-ons (e.g., `bundle_ProductName`, `addon_ProductName`)
+  </Accordion>
+  
+  <Accordion title="subscription.charge.completed">
+    Triggered when a subscription charge is successfully processed.
+    
+    **Actions:**
+    - Finds all licenses with matching subscription ID
+    - Renews each license to extend expiry date
+    - Unsuspends licenses if they were previously suspended
+    
+    This ensures licenses stay active as long as the subscription is paid.
+  </Accordion>
+  
+  <Accordion title="subscription.payment.overdue">
+    Triggered when a subscription payment becomes overdue.
+    
+    **Actions:**
+    - Finds all licenses with matching subscription ID
+    - Suspends each license to prevent usage
+    
+    Licenses will be unsuspended automatically if the payment is later completed.
+  </Accordion>
+  
+  <Accordion title="subscription.deactivated">
+    Triggered when a subscription is deactivated (canceled, expired, or failed).
+    
+    **Actions:**
+    - Finds all licenses with matching subscription ID
+    - Permanently deletes each license from Cryptlex
+    
+    <Warning>
+    License deletion is permanent and cannot be undone. Ensure your FastSpring webhook events are correctly configured.
+    </Warning>
+  </Accordion>
+</AccordionGroup>
+
+## Environment Variables
+
+Set these environment variables in your hosting environment:
+
+| Variable | Required | Description |
+|----------|----------|-------------|
+| `FASTSPRING_WEBHOOK_SECRET` | Yes | Your FastSpring webhook secret for HMAC signature verification |
+| `CRYPTLEX_ACCESS_TOKEN` | Yes | Cryptlex API access token with `license:read`, `license:write`, `user:read`, `user:write`, and `licenseTemplate:read` (for add-ons) permissions |
+| `CRYPTLEX_WEB_API_BASE_URL` | Yes | Base URL of the Cryptlex Web API |
+
+<Note>
+The `licenseTemplate:read` permission is only required if you plan to support subscription add-ons.
+</Note>
+
+## Setup Instructions
+
+### 1. Deploy the Integration
+
+Choose your deployment method:
+
+**AWS Lambda:**
+Review the provided `aws.yml` GitHub Actions workflow for automated deployments.
+
+**Node.js / Docker:**
+Use the provided Dockerfile to run in any containerized environment.
+
+### 2. Configure FastSpring Webhook
+
+1. Log in to your FastSpring account
+2. Go to **Integrations > Webhooks**
+3. Click **Add Webhook URL**
+4. Set the URL to your deployed endpoint: `https://your-domain.com/v1`
+5. Generate a **Secret** and save it as `FASTSPRING_WEBHOOK_SECRET`
+6. Select the following events:
+   - `order.completed`
+   - `subscription.charge.completed`
+   - `subscription.payment.overdue`
+   - `subscription.deactivated`
+7. Save the webhook configuration
+
+### 3. Configure Product Custom Attributes
+
+For each FastSpring product, add custom attributes to map to Cryptlex:
+
+**Required attributes:**
+- `cryptlex_product_id` - Your Cryptlex Product ID
+- `cryptlex_license_template_id` - License template to use
+- `cryptlex_license_subscription_interval` - Subscription interval (e.g., `P1M` for monthly, `P1Y` for yearly, or empty string for perpetual)
+
+**Optional attributes:**
+- `cryptlex_mappings_quantity` - Set to `allowedActivations` to map quantity to activations, or `licenseCount` to create multiple licenses
+- `cryptlex_is_bundle` - Set to `true` for bundle products (the bundle product itself won't create a license)
+
+<Note>
+Subscription intervals use ISO 8601 duration format: `P1M` (1 month), `P1Y` (1 year), `P3M` (3 months), etc.
+</Note>
+
+### 4. Set Environment Variables
+
+Configure all required environment variables:
+
+```bash
+FASTSPRING_WEBHOOK_SECRET=your-webhook-secret
+CRYPTLEX_ACCESS_TOKEN=your-access-token
+CRYPTLEX_WEB_API_BASE_URL=https://api.cryptlex.com
+```
+
+## Webhook Signature Verification
+
+FastSpring signs webhooks using HMAC-SHA256. The integration verifies every request:
+
+```typescript
+function isValidSignature(body: any, signature: string, secret: string) {
+  const computedSignature = crypto
+    .createHmac('sha256', secret)
+    .update(body)
+    .digest('base64');
+  return computedSignature === signature;
+}
+
+const fsSignature = context.req.header('x-fs-signature'); 
+if (!fsSignature) {
+  throw new Error('No x-fs-signature header was found.')
+}
+
+const rawbody = await context.req.text();
+if (!isValidSignature(rawbody, fsSignature, FASTSPRING_WEBHOOK_SECRET)) {
+  throw new Error('The payload is tampered')
+}
+```
+
+**How it works:**
+1. FastSpring computes HMAC-SHA256 of the raw request body using your secret
+2. The signature is sent in the `x-fs-signature` header
+3. The integration computes the signature independently and compares
+4. Only matching signatures are processed
+
+<Warning>
+Always verify signatures before processing webhooks to prevent spoofed requests.
+</Warning>
+
+## Example Workflows
+
+### One-Time Purchase
+
+When a customer purchases a product:
+
+1. **Event:** `order.completed`
+2. **Handler:** `handleOrderCreated`
+3. **Actions:**
+   - Create user from customer email and name
+   - Extract product attributes (product ID, template ID)
+   - Create license(s) based on quantity
+   - Store order ID in metadata
+4. **Result:** Customer receives perpetual license(s)
+
+```typescript
+const body = {
+  productId: customAttributes.productId,
+  licenseTemplateId: customAttributes.licenseTemplateId,
+  metadata: [
+    { key: 'order_id', value: orderCompletedData.id, viewPermissions: [] }
+  ],
+  userId: userId,
+  subscriptionInterval: '' // Empty for perpetual
+};
+```
+
+### Subscription Order
+
+When a customer starts a subscription:
+
+1. **Event:** `order.completed`
+2. **Handler:** `handleOrderCreated`
+3. **Actions:**
+   - Create user
+   - Create license with subscription interval
+   - Store subscription ID in metadata
+4. **Result:** Time-limited license that auto-renews
+
+```typescript
+const metadata = [
+  {
+    key: 'subscription_id',
+    value: item.subscription.id,
+    viewPermissions: []
+  }
+];
+const body = {
+  productId: customAttributes.productId,
+  licenseTemplateId: customAttributes.licenseTemplateId,
+  metadata: metadata,
+  userId: userId,
+  subscriptionInterval: 'P1M' // Monthly subscription
+};
+```
+
+### Subscription Renewal
+
+When a subscription charge succeeds:
+
+1. **Event:** `subscription.charge.completed`
+2. **Handler:** `handleSubscriptionChargeCompleted`
+3. **Actions:**
+   - Find licenses by subscription ID
+   - Renew each license
+   - Unsuspend if previously suspended
+4. **Result:** License expiry extended
+
+```typescript
+const licenses = await getLicensesBySubscriptionId(
+  client,
+  subscriptionId,
+  'subscription_id'
+);
+
+for (const license of licenses) {
+  await client.POST('/v3/licenses/{id}/renew', {
+    params: { path: { id: license.id } }
+  });
+  
+  if (license.suspended) {
+    await client.PATCH('/v3/licenses/{id}', {
+      params: { path: { id: license.id } },
+      body: { suspended: false }
+    });
+  }
+}
+```
+
+### Payment Overdue
+
+When a subscription payment fails:
+
+1. **Event:** `subscription.payment.overdue`
+2. **Handler:** `handleSubscriptionPaymentOverdue`
+3. **Actions:**
+   - Find licenses by subscription ID
+   - Suspend each license
+4. **Result:** License usage blocked until payment
+
+```typescript
+for (const license of licenses) {
+  await client.PATCH('/v3/licenses/{id}', {
+    params: { path: { id: license.id } },
+    body: { suspended: true }
+  });
+}
+```
+
+### Subscription Canceled
+
+When a subscription is deactivated:
+
+1. **Event:** `subscription.deactivated`
+2. **Handler:** `handleSubscriptionDeactivated`
+3. **Actions:**
+   - Find licenses by subscription ID
+   - Delete each license permanently
+4. **Result:** Licenses removed from Cryptlex
+
+## Advanced Features
+
+### Bundle Support
+
+Bundles allow selling multiple products together:
+
+```typescript
+if (item?.driver?.type === 'bundle') {
+  const bundleProductName = item.driver.path;
+  metadata = [
+    { key: 'order_id', value: orderCompletedData.id, viewPermissions: [] },
+    { key: 'driver', value: `bundle_${bundleProductName}`, viewPermissions: [] }
+  ];
+  // Bundle items are perpetual
+  subscriptionInterval = '';
+}
+```
+
+### Add-on Support
+
+Add-ons inherit subscription properties from parent:
+
+```typescript
+if (item.parentSubscription && item?.driver?.type === 'addon') {
+  const parentSubscriptionId = item.parentSubscription;
+  const parentProductName = item.driver.path;
+  
+  // Get parent subscription properties
+  const parentProps = await getSubscriptionProperties(
+    parentSubscriptionId,
+    orderCompletedData.items,
+    parentSubscriptionPropertiesDictionary,
+    client
+  );
+  
+  subscriptionInterval = parentProps.subscriptionInterval;
+  subscriptionStartTrigger = parentProps.subscriptionStartTrigger;
+}
+```
+
+### Quantity Mapping
+
+Control how product quantity maps to licenses:
+
+**License count mode** (default):
+- Quantity of 5 creates 5 separate licenses
+
+**Allowed activations mode:**
+- Quantity of 5 creates 1 license with 5 allowed activations
+
+```typescript
+if (customAttributes?.mappingsQuantity === 'allowedActivations') {
+  body.allowedActivations = Number(item.quantity);
+}
+```
+
+## FAQ
+
+<AccordionGroup>
+  <Accordion title="What happens if order.completed fails partially?">
+    The handler creates users and licenses sequentially. If an error occurs, the error message includes which user ID was created and which license IDs were created before failure, helping you recover manually.
+  </Accordion>
+  
+  <Accordion title="Can I prevent license deletion on subscription.deactivated?">
+    Yes, modify `handleSubscriptionDeactivated` to suspend licenses instead of deleting them. Replace the `DELETE` call with a `PATCH` setting `suspended: true`.
+  </Accordion>
+  
+  <Accordion title="How do I handle refunds?">
+    FastSpring doesn't have a specific refund webhook event. You'll need to manually delete or suspend licenses when processing refunds, or set up a custom workflow.
+  </Accordion>
+  
+  <Accordion title="Can I test webhooks before going live?">
+    Yes! FastSpring provides a test mode. You can also use tools like ngrok to tunnel webhooks to your local development environment.
+  </Accordion>
+  
+  <Accordion title="What if a subscription has multiple products?">
+    The integration handles this automatically. Each product in the subscription creates its own license, all sharing the same subscription ID in metadata.
+  </Accordion>
+</AccordionGroup>
+
+## Error Handling
+
+All errors include context about what succeeded before failure:
+
+```typescript
+throw new Error(
+  `Could not process the order.completed webhook event with Id ${eventId}. 
+  ${userId ? `User ID: ${userId} created` : 'User ID not created'}. 
+  ${licenses.length ? `Licenses created: ${licenses.map(l => l.id).join(', ')}` : 'No License created'}. 
+  Failure reason: ${reason}`
+);
+```
+
+This helps you:
+- Identify which step failed
+- Recover partial progress manually
+- Debug issues faster
+
+## Support
+
+If you have questions or experience issues, contact Cryptlex support at [support@cryptlex.com](mailto:support@cryptlex.com).
