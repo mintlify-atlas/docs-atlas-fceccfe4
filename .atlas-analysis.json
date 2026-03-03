@@ -1,0 +1,78 @@
+{
+  "projectType": "api-service",
+  "projectName": "Cryptlex Payment Platform Integrations",
+  "projectDescription": "Webhook server integrations for Stripe, FastSpring, and Paddle that automatically manage Cryptlex users and licenses.",
+  "theme": "aspen",
+  "primaryColor": "#5B5FDF",
+  "lightColor": "#8B8FF5",
+  "darkColor": "#3B3FBF",
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "Documentation",
+        "groups": [
+          {
+            "group": "Get Started",
+            "pages": [
+              "introduction",
+              "overview",
+              "quickstart"
+            ]
+          },
+          {
+            "group": "Integrations",
+            "pages": [
+              "integrations/stripe",
+              "integrations/fastspring",
+              "integrations/paddle"
+            ]
+          },
+          {
+            "group": "Deployment",
+            "pages": [
+              "deployment/aws-lambda",
+              "deployment/docker-nodejs",
+              "deployment/environment-variables"
+            ]
+          },
+          {
+            "group": "Reference",
+            "pages": [
+              "reference/webhook-events",
+              "reference/user-actions",
+              "reference/license-actions",
+              "reference/troubleshooting"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "keyFeatures": [
+    "Webhook signature verification for Stripe, FastSpring, and Paddle",
+    "Automatic user creation and updates in Cryptlex",
+    "License lifecycle management (create, renew, suspend, delete)",
+    "Support for subscriptions and one-time payments",
+    "Flexible deployment (AWS Lambda or Docker/Node.js)",
+    "TypeScript-based with full type safety"
+  ],
+  "publicApiSurface": [
+    "POST /v1 - Stripe webhook endpoint",
+    "POST /v1 - FastSpring webhook endpoint",
+    "POST /v1 - Paddle webhook endpoint",
+    "stripe.invoice.paid event handler",
+    "stripe.checkout.session.completed event handler",
+    "stripe.customer.created event handler",
+    "fastspring.order.completed event handler",
+    "fastspring.subscription.charge.completed event handler",
+    "fastspring.subscription.payment.overdue event handler",
+    "fastspring.subscription.deactivated event handler",
+    "paddle.transaction.completed event handler",
+    "paddle.subscription.paused event handler",
+    "paddle.customer.created event handler",
+    "insertUser() utility function",
+    "upsertUser() utility function",
+    "createLicense() utility function",
+    "getLicensesBySubscriptionId() utility function"
+  ]
+}
